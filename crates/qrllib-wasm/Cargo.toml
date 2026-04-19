@@ -1,0 +1,18 @@
+[package]
+name = "qrllib-wasm"
+version = "0.1.0"
+edition = "2024"
+description = "wasm-bindgen wrappers around the Rust QRL library for browser demos"
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[dependencies]
+hex.workspace = true
+qrllib = { path = "../qrllib" }
+serde.workspace = true
+serde-wasm-bindgen.workspace = true
+wasm-bindgen.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]

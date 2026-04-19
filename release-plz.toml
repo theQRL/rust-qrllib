@@ -1,0 +1,13 @@
+[workspace]
+publish = false
+release_always = false
+semver_check = false
+pr_labels = ["release"]
+
+[[package]]
+name = "qrllib"
+version_group = "workspace"
+
+[[package]]
+name = "qrllib-wasm"
+version_group = "workspace"

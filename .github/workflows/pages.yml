@@ -1,0 +1,77 @@
+name: Deploy Demo
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'Cargo.lock'
+      - 'Cargo.toml'
+      - 'crates/**'
+      - 'demo/**'
+      - '.github/workflows/pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build Demo
+    runs-on: ubuntu-latest
+    if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install dependencies
+        working-directory: demo
+        run: npm ci
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
+      - name: Build demo
+        working-directory: demo
+        env:
+          VITE_BASE_PATH: /rust-qrllib/
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: demo/dist
+
+  deploy:
+    name: Deploy Demo
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

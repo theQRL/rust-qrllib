@@ -1,0 +1,90 @@
+name: Test
+
+on: [push, pull_request]
+
+permissions:
+  contents: read
+
+jobs:
+  workspace-tests:
+    name: Workspace Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run workspace tests
+        run: cargo test --workspace
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Generate coverage report
+        run: cargo llvm-cov --package qrllib --lcov --output-path lcov.info
+
+      - name: Upload coverage to Codecov
+        if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
+        uses: codecov/codecov-action@v5
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./lcov.info
+          flags: rust-qrllib
+          fail_ci_if_error: true
+
+  demo-build:
+    name: Demo Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@v2
+
+      - name: Setup wasm-pack
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: demo/package-lock.json
+
+      - name: Install demo dependencies
+        working-directory: demo
+        run: npm ci
+
+      - name: Build demo
+        working-directory: demo
+        run: npm run build

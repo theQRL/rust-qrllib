@@ -1,0 +1,37 @@
+# Dependabot configuration for rust-qrllib
+# https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+updates:
+  # Rust workspace
+  - package-ecosystem: "cargo"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "rust"
+
+  # Demo app
+  - package-ecosystem: "npm"
+    directory: "/demo"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "deps"
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "ci"
+    labels:
+      - "dependencies"
+      - "ci"

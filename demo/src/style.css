@@ -1,0 +1,49 @@
+@import url("https://rsms.me/inter/inter.css");
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans: "InterVariable", sans-serif;
+  --font-sans--font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+}
+
+:root {
+  color: var(--color-gray-900);
+  background-color: var(--color-gray-50);
+  font-family: var(--font-sans);
+  font-optical-sizing: auto;
+}
+
+html {
+  background-color: var(--color-gray-50);
+}
+
+html.dark {
+  color: white;
+  background-color: var(--color-gray-800);
+}
+
+body {
+  min-height: 100dvh;
+}
+
+#app {
+  min-height: 100dvh;
+}
+
+::selection {
+  background: color-mix(in oklab, var(--color-amber-400) 30%, transparent);
+}
+
+input,
+select,
+textarea {
+  border-color: transparent;
+}
+
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: transparent;
+}

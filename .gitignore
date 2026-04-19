@@ -1,0 +1,14 @@
+\.idea
+coverage/
+coverage*.out
+coverage.html
+test-*.out
+target/
+demo/node_modules/
+demo/dist/
+demo/.vite/
+crates/qrllib-wasm/pkg/
+
+# Test binaries
+*.test
+*.prof
