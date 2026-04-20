@@ -1,7 +1,7 @@
 use crate::error::{QrllibError, Result};
 use sha2::{Digest, Sha256};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const OFFSET_IDX: usize = 0;
 const OFFSET_SK_SEED: usize = OFFSET_IDX + 4;
@@ -67,7 +67,32 @@ struct BdsState {
     retain: Vec<u8>,
 }
 
-#[derive(Clone, Debug)]
+/// A stateful RFC 8391 XMSS signer.
+///
+/// # XMSS statefulness — must read
+///
+/// XMSS is a **stateful** one-time-signature scheme. Signing with the same OTS
+/// index twice under different messages lets any observer forge signatures on
+/// (most) messages under the same public key — an irreversible compromise of
+/// the entire tree.
+///
+/// This type deliberately does **not** implement [`Clone`]. Duplicating the
+/// signer would produce two independent instances sharing the OTS index, and
+/// the first pair of sign calls across them would constitute immediate
+/// one-time-key reuse. Callers who need to persist and restore XMSS state (via
+/// [`Xmss::secret_key`] / [`Xmss::initialize_tree`] or equivalent) own the
+/// responsibility for:
+///
+/// - never restoring from a backup without reconciling the highest used OTS
+///   index;
+/// - persisting the updated index atomically, before a signature is broadcast
+///   or otherwise used;
+/// - serialising access so that no two threads or processes sign concurrently
+///   from the same tree;
+/// - rotating keys well before the tree is exhausted.
+///
+/// See `SECURITY.md` for the full threat model.
+#[derive(Debug)]
 pub struct Xmss {
     xmss_params: XmssParams,
     hash_function: XmssHashFunction,
@@ -171,12 +196,16 @@ impl Xmss {
         Ok(Self { xmss_params, hash_function, height, seed: seed.to_vec(), sk, bds_state })
     }
 
-    pub fn seed(&self) -> Vec<u8> {
-        self.seed.clone()
+    /// Returns a zeroizing copy of the XMSS seed. The returned value
+    /// drops-clear on scope exit.
+    pub fn seed(&self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(self.seed.clone())
     }
 
-    pub fn secret_key(&self) -> Vec<u8> {
-        self.sk.clone()
+    /// Returns a zeroizing copy of the 132-byte XMSS secret key (including the
+    /// advancing OTS index in the first four bytes).
+    pub fn secret_key(&self) -> Zeroizing<Vec<u8>> {
+        Zeroizing::new(self.sk.clone())
     }
 
     pub fn public_seed(&self) -> Vec<u8> {
@@ -231,9 +260,21 @@ impl Xmss {
     }
 
     pub fn zeroize(&mut self) {
-        self.sk.zeroize();
-        self.seed.zeroize();
+        // Use slice-level `zeroize` on the owned `Vec`s so that the byte
+        // contents are cleared but the buffer length is preserved. Calling
+        // `Vec::zeroize` directly truncates the vector to length 0, which
+        // would turn subsequent read attempts on the zeroized signer into
+        // out-of-bounds panics; after this routine a caller can still call
+        // `sign` and receive a clean `QrllibError::XmssSecretKeyZeroized`.
+        self.sk.as_mut_slice().zeroize();
+        self.seed.as_mut_slice().zeroize();
         self.bds_state.zeroize();
+    }
+}
+
+impl Drop for Xmss {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -367,12 +408,14 @@ impl BdsState {
     }
 
     fn zeroize(&mut self) {
-        self.stack.zeroize();
-        self.auth.zeroize();
-        self.keep.zeroize();
-        self.retain.zeroize();
+        // See the note on `Xmss::zeroize` — clear byte contents but preserve
+        // the `Vec` buffer lengths so later reads do not panic.
+        self.stack.as_mut_slice().zeroize();
+        self.auth.as_mut_slice().zeroize();
+        self.keep.as_mut_slice().zeroize();
+        self.retain.as_mut_slice().zeroize();
         for tree_hash in &mut self.tree_hash {
-            tree_hash.node.zeroize();
+            tree_hash.node.as_mut_slice().zeroize();
         }
     }
 }
@@ -861,6 +904,19 @@ fn xmss_fast_sign_message(
     message: &[u8],
 ) -> Result<Vec<u8>> {
     let n = params.n as usize;
+
+    // Reject signing when the secret-key buffer has been zeroized. Leading
+    // zeros are expected on a fresh tree (index = 0); the check is on the
+    // sk_seed / sk_prf / pub_seed / root region at offsets [4, 4 + 4n).
+    let key_region_end = 4 + 4 * n;
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key[4..key_region_end].iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
+        return Err(QrllibError::XmssSecretKeyZeroized);
+    }
+
     let idx = read_index(secret_key);
 
     let sk_seed = secret_key[4..4 + n].to_vec();
@@ -1459,14 +1515,13 @@ mod tests {
 
     #[test]
     fn xmss_height_from_signature_size_matches_height() {
-        let tree = Xmss::initialize_tree(
+        let mut tree = Xmss::initialize_tree(
             XmssHeight::new(4).expect("height"),
             XmssHashFunction::Shake128,
             &[0_u8; 48],
         )
         .expect("tree");
-        let mut signing_tree = tree.clone();
-        let signature = signing_tree.sign(b"message").expect("signature");
+        let signature = tree.sign(b"message").expect("signature");
         assert_eq!(
             get_xmss_height_from_sig_size(signature.len() as u32, super::XMSS_WOTS_PARAM_W)
                 .expect("height")
@@ -1551,19 +1606,18 @@ mod tests {
         ));
         assert!(matches!(XmssHeight(1).descriptor_byte(), Err(QrllibError::InvalidXmssHeight(1))));
 
-        let tree = Xmss::initialize_tree(
+        let mut tree = Xmss::initialize_tree(
             XmssHeight::new(4).expect("height"),
             XmssHashFunction::Shake128,
             &[0_u8; 48],
         )
         .expect("tree");
-        assert_eq!(tree.seed(), vec![0_u8; 48]);
+        assert_eq!(tree.seed().as_slice(), &[0_u8; 48]);
         assert_eq!(tree.secret_key().len(), XMSS_SECRET_KEY_SIZE);
         assert_eq!(tree.hash_function(), XmssHashFunction::Shake128);
         assert_eq!(tree.height().as_u8(), 4);
 
-        let mut signing_tree = tree.clone();
-        let signature = signing_tree.sign(b"validation").expect("signature");
+        let signature = tree.sign(b"validation").expect("signature");
         assert!(matches!(
             get_xmss_height_from_sig_size(10, XMSS_WOTS_PARAM_W),
             Err(QrllibError::InvalidSignatureSize(_, _))
@@ -1598,10 +1652,9 @@ mod tests {
             Err(QrllibError::InvalidXmssHeight(3))
         ));
 
-        let mut zeroized = tree.clone();
-        zeroized.zeroize();
-        assert!(zeroized.secret_key().iter().all(|byte| *byte == 0));
-        assert!(zeroized.seed().iter().all(|byte| *byte == 0));
+        tree.zeroize();
+        assert!(tree.secret_key().iter().all(|byte| *byte == 0));
+        assert!(tree.seed().iter().all(|byte| *byte == 0));
     }
 
     #[test]
@@ -1689,5 +1742,20 @@ mod tests {
             &[0_u8; 48],
         )
         .expect("generated key pair");
+    }
+
+    #[test]
+    fn xmss_sign_rejects_zeroized_secret_key() {
+        let mut tree = Xmss::initialize_tree(
+            XmssHeight::new(4).expect("height"),
+            XmssHashFunction::Shake128,
+            &[0_u8; 48],
+        )
+        .expect("tree");
+        tree.zeroize();
+        assert!(matches!(
+            tree.sign(b"after zeroize"),
+            Err(QrllibError::XmssSecretKeyZeroized)
+        ));
     }
 }

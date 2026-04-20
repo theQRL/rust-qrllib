@@ -7,7 +7,7 @@ use crate::{
     },
 };
 use sha2::{Digest, Sha256};
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const LEGACY_XMSS_DESCRIPTOR_SIZE: usize = 3;
 pub const LEGACY_XMSS_SEED_SIZE: usize = XMSS_SEED_SIZE;
@@ -37,7 +37,16 @@ pub struct QrlDescriptor {
     addr_format_type: LegacyAddrFormatType,
 }
 
-#[derive(Clone, Debug)]
+/// Legacy QRL XMSS wallet wrapper.
+///
+/// Wraps an [`Xmss`] signer with the QRL descriptor, 48-byte QRL seed, and
+/// address-format metadata required for legacy QRL addresses.
+///
+/// Inherits the XMSS statefulness contract from [`Xmss`]: this type does
+/// **not** implement [`Clone`], and restoring from backup without reconciling
+/// the OTS index causes one-time-key reuse. See the [`Xmss`] docs and
+/// `SECURITY.md` for the full threat model and operational rules.
+#[derive(Debug)]
 pub struct LegacyXmssWallet {
     seed: [u8; LEGACY_XMSS_SEED_SIZE],
     descriptor: QrlDescriptor,
@@ -211,8 +220,8 @@ impl LegacyXmssWallet {
         self.xmss.height()
     }
 
-    pub fn seed(&self) -> [u8; LEGACY_XMSS_SEED_SIZE] {
-        self.seed
+    pub fn seed(&self) -> Zeroizing<[u8; LEGACY_XMSS_SEED_SIZE]> {
+        Zeroizing::new(self.seed)
     }
 
     pub fn extended_seed(&self) -> [u8; LEGACY_XMSS_EXTENDED_SEED_SIZE] {
@@ -248,7 +257,7 @@ impl LegacyXmssWallet {
         output
     }
 
-    pub fn secret_key(&self) -> Vec<u8> {
+    pub fn secret_key(&self) -> Zeroizing<Vec<u8>> {
         self.xmss.secret_key()
     }
 
@@ -271,6 +280,12 @@ impl LegacyXmssWallet {
     pub fn zeroize(&mut self) {
         self.seed.zeroize();
         self.xmss.zeroize();
+    }
+}
+
+impl Drop for LegacyXmssWallet {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 

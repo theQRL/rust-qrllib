@@ -16,10 +16,12 @@ jobs:
     name: Dilithium (Round 3) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
 
       - name: Clone pq-crystals Dilithium (Round 3)
         run: |
@@ -29,7 +31,7 @@ jobs:
           echo "Reference commit: $(git rev-parse --short HEAD)"
 
       - name: Generate rust-qrllib Dilithium signature
-        run: cargo run --quiet -p qrllib --example dilithium_sign
+        run: cargo run --locked --quiet -p qrllib --example dilithium_sign
 
       - name: Compile reference verifier
         run: |
@@ -57,17 +59,19 @@ jobs:
       - name: Verify reference signature with rust-qrllib
         run: |
           echo "=== Verifying pq-crystals signature with rust-qrllib ==="
-          cargo run --quiet -p qrllib --example dilithium_verify
+          cargo run --locked --quiet -p qrllib --example dilithium_verify
           echo "✓ pq-crystals → rust-qrllib: PASSED"
 
   mldsa87-cross-verify:
     name: ML-DSA-87 (FIPS 204) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
 
       - name: Clone pq-crystals Dilithium (FIPS 204)
         run: |
@@ -76,7 +80,7 @@ jobs:
           echo "Reference commit: $(git rev-parse --short HEAD)"
 
       - name: Generate rust-qrllib ML-DSA-87 signature
-        run: cargo run --quiet -p qrllib --example mldsa87_sign
+        run: cargo run --locked --quiet -p qrllib --example mldsa87_sign
 
       - name: Compile reference verifier
         run: |
@@ -104,17 +108,19 @@ jobs:
       - name: Verify reference signature with rust-qrllib
         run: |
           echo "=== Verifying pq-crystals ML-DSA-87 signature with rust-qrllib ==="
-          cargo run --quiet -p qrllib --example mldsa87_verify
+          cargo run --locked --quiet -p qrllib --example mldsa87_verify
           echo "✓ pq-crystals → rust-qrllib: PASSED"
 
   sphincs-cross-verify:
     name: SPHINCS+ (SHAKE-256s-robust) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
 
       - name: Clone SPHINCS+ reference (consistent-basew branch)
         run: |
@@ -124,7 +130,7 @@ jobs:
           echo "Reference commit: $(git rev-parse --short HEAD)"
 
       - name: Generate rust-qrllib SPHINCS+ signature
-        run: cargo run --quiet -p qrllib --example sphincs_sign
+        run: cargo run --locked --quiet -p qrllib --example sphincs_sign
 
       - name: Compile reference verifier
         run: |
@@ -156,17 +162,19 @@ jobs:
       - name: Verify reference signature with rust-qrllib
         run: |
           echo "=== Verifying reference SPHINCS+ signature with rust-qrllib ==="
-          cargo run --quiet -p qrllib --example sphincs_verify
+          cargo run --locked --quiet -p qrllib --example sphincs_verify
           echo "✓ reference → rust-qrllib: PASSED"
 
   xmss-cross-verify:
     name: XMSS (SHA2_10_256) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: 1.95.0
 
       - name: Clone XMSS reference (RFC 8391)
         run: |
@@ -175,7 +183,7 @@ jobs:
           echo "Reference commit: $(git rev-parse --short HEAD)"
 
       - name: Generate rust-qrllib XMSS signature
-        run: cargo run --quiet -p qrllib --example xmss_sign
+        run: cargo run --locked --quiet -p qrllib --example xmss_sign
 
       - name: Compile reference verifier
         run: |

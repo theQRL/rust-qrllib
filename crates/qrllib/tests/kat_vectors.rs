@@ -111,7 +111,7 @@ fn dilithium_known_answer_vectors_cover_deterministic_api_contracts() {
         );
 
         let signature_from_sk =
-            sign_dilithium_with_secret_key(&message, &signer_a.secret_key_bytes())
+            sign_dilithium_with_secret_key(&message, signer_a.secret_key_bytes().as_slice())
                 .expect("sign with secret key");
         assert_eq!(signature_a, signature_from_sk, "{}", vector.name);
 

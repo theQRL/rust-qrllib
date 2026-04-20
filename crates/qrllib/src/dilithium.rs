@@ -9,7 +9,7 @@ use sha3::{
     Shake128, Shake256,
     digest::{ExtendableOutput, Update, XofReader},
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const DILITHIUM_CRYPTO_SEED_SIZE: usize = 32;
 pub const DILITHIUM_PUBLIC_KEY_SIZE: usize = DILITHIUM_CRYPTO_SEED_SIZE + K * POLY_T1_PACKED_BYTES;
@@ -39,6 +39,10 @@ const TAU: usize = 60;
 const BETA: i32 = 120;
 const GAMMA1: i32 = 1 << 19;
 const OMEGA: usize = 75;
+
+/// Upper bound on the rejection-sampling loop in `crypto_sign_signature`.
+/// Matches the ML-DSA cap (FIPS 204 §E.2 expected iterations ≈ 4.25).
+const REJECTION_BUDGET: u32 = 1024;
 
 const POLY_T1_PACKED_BYTES: usize = 320;
 const POLY_T0_PACKED_BYTES: usize = 416;
@@ -155,15 +159,35 @@ pub fn sign_dilithium_with_secret_key(
     message: &[u8],
     secret_key: &[u8],
 ) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
+    sign_dilithium_with_secret_key_modal(message, secret_key, false)
+}
+
+/// Hedged-mode counterpart to [`sign_dilithium_with_secret_key`].
+pub fn sign_dilithium_with_secret_key_randomized(
+    message: &[u8],
+    secret_key: &[u8],
+) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
+    sign_dilithium_with_secret_key_modal(message, secret_key, true)
+}
+
+fn sign_dilithium_with_secret_key_modal(
+    message: &[u8],
+    secret_key: &[u8],
+    randomized: bool,
+) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
     validate_dilithium_secret_key(secret_key)?;
-    if secret_key.iter().all(|byte| *byte == 0) {
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key.iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
         return Err(QrllibError::DilithiumSecretKeyZeroized);
     }
 
     let mut secret_key_bytes = [0_u8; DILITHIUM_SECRET_KEY_SIZE];
     secret_key_bytes.copy_from_slice(secret_key);
     let mut signature = [0_u8; DILITHIUM_SIGNATURE_SIZE];
-    crypto_sign_signature(&mut signature, message, &secret_key_bytes, false)?;
+    crypto_sign_signature(&mut signature, message, &secret_key_bytes, randomized)?;
     Ok(signature)
 }
 
@@ -204,12 +228,15 @@ impl Dilithium {
         self.public_key
     }
 
-    pub fn secret_key_bytes(&self) -> [u8; DILITHIUM_SECRET_KEY_SIZE] {
-        self.secret_key
+    /// Returns a zeroizing copy of the packed secret key; see
+    /// [`MlDsa87::secret_key_bytes`](crate::MlDsa87::secret_key_bytes).
+    pub fn secret_key_bytes(&self) -> Zeroizing<[u8; DILITHIUM_SECRET_KEY_SIZE]> {
+        Zeroizing::new(self.secret_key)
     }
 
-    pub fn seed(&self) -> [u8; DILITHIUM_CRYPTO_SEED_SIZE] {
-        self.seed
+    /// Returns a zeroizing copy of the 32-byte Dilithium crypto seed.
+    pub fn seed(&self) -> Zeroizing<[u8; DILITHIUM_CRYPTO_SEED_SIZE]> {
+        Zeroizing::new(self.seed)
     }
 
     pub fn hex_seed(&self) -> String {
@@ -220,8 +247,18 @@ impl Dilithium {
         sign_dilithium_with_secret_key(message, &self.secret_key)
     }
 
+    /// Hedged (randomised) counterpart to [`Dilithium::sign`].
+    pub fn sign_randomized(&self, message: &[u8]) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
+        sign_dilithium_with_secret_key_randomized(message, &self.secret_key)
+    }
+
     pub fn seal(&self, message: &[u8]) -> Result<Vec<u8>> {
         crypto_sign(message, &self.secret_key, false)
+    }
+
+    /// Hedged (randomised) counterpart to [`Dilithium::seal`].
+    pub fn seal_randomized(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crypto_sign(message, &self.secret_key, true)
     }
 
     pub fn verify(&self, message: &[u8], signature: &[u8; DILITHIUM_SIGNATURE_SIZE]) -> bool {
@@ -231,6 +268,12 @@ impl Dilithium {
     pub fn zeroize(&mut self) {
         self.secret_key.zeroize();
         self.seed.zeroize();
+    }
+}
+
+impl Drop for Dilithium {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1048,6 +1091,12 @@ fn crypto_sign_keypair(
 
     shake256(&mut tr, public_key);
     pack_sk(secret_key, &rho, &tr, &key, &t0, &s1, &s2);
+
+    key.zeroize();
+    rho_prime.zeroize();
+    zero_poly_vec_l(&mut s1);
+    zero_poly_vec_k(&mut s2);
+    zero_poly_vec_k(&mut t0);
 }
 
 fn crypto_sign_signature(
@@ -1093,7 +1142,7 @@ fn crypto_sign_signature(
         poly_vec_k_ntt(&mut s2);
         poly_vec_k_ntt(&mut t0);
 
-        loop {
+        for _ in 0..REJECTION_BUDGET {
             poly_vec_l_uniform_gamma1(&mut y, &rho_prime, nonce);
             nonce = nonce.wrapping_add(1);
 
@@ -1150,6 +1199,7 @@ fn crypto_sign_signature(
             pack_sig(signature, &challenge, &z, &hints);
             return Ok(());
         }
+        Err(QrllibError::RejectionBudgetExceeded(REJECTION_BUDGET))
     })();
 
     key.zeroize();
@@ -1166,6 +1216,14 @@ fn crypto_sign(
     secret_key: &[u8; DILITHIUM_SECRET_KEY_SIZE],
     randomized_signing: bool,
 ) -> Result<Vec<u8>> {
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key.iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
+        return Err(QrllibError::DilithiumSecretKeyZeroized);
+    }
+
     let mut signed_message = vec![0_u8; DILITHIUM_SIGNATURE_SIZE + message.len()];
     signed_message[DILITHIUM_SIGNATURE_SIZE..].copy_from_slice(message);
     let mut signature = [0_u8; DILITHIUM_SIGNATURE_SIZE];
@@ -1342,8 +1400,9 @@ mod tests {
     fn sign_with_secret_key_matches_instance_and_zeroize() {
         let mut signer = Dilithium::from_seed(known_seed());
         let message = b"deterministic legacy dilithium";
-        let signature = sign_dilithium_with_secret_key(message, &signer.secret_key_bytes())
-            .expect("sign with secret key");
+        let signature =
+            sign_dilithium_with_secret_key(message, signer.secret_key_bytes().as_slice())
+                .expect("sign with secret key");
         assert_eq!(signature, signer.sign(message).expect("instance sign"));
         assert!(verify_dilithium_signature(message, &signature, &signer.public_key_bytes()));
 
@@ -1351,7 +1410,7 @@ mod tests {
         assert!(signer.seed().iter().all(|byte| *byte == 0));
         assert!(signer.secret_key_bytes().iter().all(|byte| *byte == 0));
         assert!(matches!(
-            sign_dilithium_with_secret_key(message, &signer.secret_key_bytes()),
+            sign_dilithium_with_secret_key(message, signer.secret_key_bytes().as_slice()),
             Err(QrllibError::DilithiumSecretKeyZeroized)
         ));
     }
@@ -1360,7 +1419,7 @@ mod tests {
     fn dilithium_validation_and_error_paths_are_covered() {
         let signer = Dilithium::from_seed(known_seed());
         assert!(validate_dilithium_public_key(&signer.public_key_bytes()).is_ok());
-        assert!(validate_dilithium_secret_key(&signer.secret_key_bytes()).is_ok());
+        assert!(validate_dilithium_secret_key(signer.secret_key_bytes().as_slice()).is_ok());
         assert!(matches!(
             validate_dilithium_public_key(&[0_u8; 1]),
             Err(QrllibError::InvalidDilithiumPublicKeySize(1, DILITHIUM_PUBLIC_KEY_SIZE))
@@ -1411,6 +1470,37 @@ mod tests {
             message,
             &non_zero_padding,
             &signer.public_key_bytes()
+        ));
+    }
+
+    #[test]
+    fn dilithium_randomized_signing_produces_varying_but_valid_signatures() {
+        let signer = Dilithium::from_seed(known_seed());
+        let message = b"dilithium randomised smoke";
+
+        let deterministic_a = signer.sign(message).expect("deterministic a");
+        let deterministic_b = signer.sign(message).expect("deterministic b");
+        assert_eq!(deterministic_a, deterministic_b);
+
+        let hedged_a = signer.sign_randomized(message).expect("hedged a");
+        let hedged_b = signer.sign_randomized(message).expect("hedged b");
+        assert_ne!(hedged_a, hedged_b);
+        assert_ne!(hedged_a, deterministic_a);
+        assert!(signer.verify(message, &hedged_a));
+        assert!(signer.verify(message, &hedged_b));
+
+        let sealed_a = signer.seal_randomized(message).expect("seal a");
+        let sealed_b = signer.seal_randomized(message).expect("seal b");
+        assert_ne!(sealed_a, sealed_b);
+    }
+
+    #[test]
+    fn dilithium_seal_rejects_zeroized_secret_key() {
+        let mut signer = Dilithium::from_seed([17_u8; DILITHIUM_CRYPTO_SEED_SIZE]);
+        signer.zeroize();
+        assert!(matches!(
+            signer.seal(b"after zeroize"),
+            Err(QrllibError::DilithiumSecretKeyZeroized)
         ));
     }
 }

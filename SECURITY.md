@@ -16,6 +16,30 @@ This library assumes a trusted execution environment, a secure operating-system 
 
 This library protects against post-quantum signature forgery under the assumptions of the configured algorithm. It does not protect against compromised hosts, weak system randomness, application-level replay/rate-limit failures, or XMSS index reuse.
 
+### Signing modes (ML-DSA-87 and Dilithium)
+
+Both ML-DSA-87 and the legacy Dilithium signer expose two signing modes per FIPS 204 §3.7:
+
+- **Deterministic (default).** `sign` / `seal` produce the same signature every time for a given (secret key, message) pair. This is the mode against which the project's ACVP and cross-verification test vectors are pinned.
+- **Hedged / randomised.** `sign_randomized` / `seal_randomized` draw a fresh 32-byte value from the system RNG on every call. The resulting signature verifies under the same public key as a deterministic one but differs byte-for-byte between calls.
+
+Deterministic signing is vulnerable to fault-injection attacks: an adversary who can flip a single bit during the `z` computation can differentiate two signatures of the same message and recover `s1`/`s2` by lattice differential analysis. The hedged mode frustrates this attack because two signings of the same message use different internal randomness. Hardware wallets, cloud signers on untrusted silicon, and any deployment with a plausible fault-model should prefer the hedged entry points. SPHINCS+-256s robust is randomised-by-default per its parameter-set definition and does not expose a separate hedged mode.
+
+### Memory hygiene
+
+Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `Dilithium`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet` — implements `Drop` that zeroizes its backing buffer. Callers do not need to call `.zeroize()` explicitly for the scope-exit path to clear secrets from memory. Explicit `.zeroize()` is retained for long-lived signers that need to clear state mid-lifetime.
+
+Accessor methods that return owned secret bytes (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies inherit the same drop-clear semantics. The owned wrapper dereferences transparently to the underlying byte array or `Vec<u8>` and works unchanged with `hex::encode`, `Sha256::digest`, `.iter()`, and the library's verify helpers.
+
+After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `seal`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
+
+### Browser surface (wasm)
+
+The `qrllib-wasm` crate exposes two API shapes:
+
+- **Handle-based (recommended).** `create_*_wallet`, `open_*_wallet`, `wallet_snapshot`, `wallet_sign`, `close_wallet`, `close_all_wallets`. The extended seed crosses the wasm/JS boundary exactly once (at `open_*_wallet` time); thereafter a plain `u32` handle is passed back and forth. `close_wallet` removes the registry entry, and the wallet's `Drop` zeroizes the in-wasm state. JavaScript strings never hold the seed between calls.
+- **Legacy string-based.** `sign_message`, `sign_sphincsplus_message`, `sign_dilithium_message`, `sign_xmss_message`, and the paired `*_from_extended_seed_hex` / `generate_*` helpers. Retained for backwards compatibility. These re-accept the seed as a JavaScript string on every call; the seed persists in the JS heap across calls and cannot be zeroized from Rust. New browser consumers should prefer the handle-based API.
+
 ## Algorithm Notes
 
 | Algorithm | Status | Notes |
@@ -28,6 +52,8 @@ This library protects against post-quantum signature forgery under the assumptio
 ## XMSS State Management
 
 XMSS security is broken if the same OTS index is used twice.
+
+The type system closes one failure mode: `Xmss` and `LegacyXmssWallet` deliberately do not implement `Clone`, so the accidental `wallet.clone()` path that would cause immediate one-time-key reuse is a compile error. This does **not** close the broader surface — serialising the secret-key bytes, persisting to disk, and re-instantiating later is a legitimate pattern that the library must support, and it is the application's responsibility to ensure the new instance starts at an OTS index greater than or equal to the highest used index.
 
 Production XMSS usage must:
 
@@ -45,10 +71,13 @@ Rust regression suites cover malformed input, canonicality, KATs, thread-safety 
 - `crates/qrllib/tests/kat_vectors.rs`
 - `crates/qrllib/tests/thread_fuzz_suite.rs`
 - `crates/qrllib/tests/acvp_mldsa.rs`
+- `crates/qrllib/tests/rev_1_2_additions.rs` — regression coverage for the randomised-signing entry points, the `QrllibError::RejectionBudgetExceeded` variant, the lowercase-`q` address-validation tolerance, and the post-zeroize rejection of every sign/seal path (ML-DSA, Dilithium, SPHINCS+, and XMSS).
 
 ## Dependency Security
 
-- Rust dependencies are pinned in `Cargo.lock`.
+- Rust direct dependencies are exact-pinned in `Cargo.toml` and resolved in `Cargo.lock`; CI runs Cargo with `--locked`.
+- Demo npm direct dependencies are exact-pinned in `package.json`; CI installs with `npm ci` from `package-lock.json`.
+- GitHub Actions are pinned by commit SHA with version comments for auditability.
 - `cargo audit` scans RustSec advisories.
 - `cargo deny` enforces advisories, dependency bans, source policy, and license policy.
 - Dependabot tracks Rust crates, demo npm dependencies, and GitHub Actions.

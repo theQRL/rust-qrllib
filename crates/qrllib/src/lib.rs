@@ -14,13 +14,13 @@ pub mod wallet_type;
 mod wordlist;
 pub mod xmss;
 
-pub use address::{format_address, get_address, is_valid_address, unsafe_get_address};
+pub use address::{format_address, get_address, is_valid_address};
 pub use descriptor::Descriptor;
 pub use dilithium::{
     DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SECRET_KEY_SIZE,
     DILITHIUM_SIGNATURE_SIZE, Dilithium, dilithium_extract_message, dilithium_extract_signature,
-    dilithium_open, sign_dilithium_with_secret_key, validate_dilithium_public_key,
-    validate_dilithium_secret_key, verify_dilithium_signature,
+    dilithium_open, sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_randomized,
+    validate_dilithium_public_key, validate_dilithium_secret_key, verify_dilithium_signature,
 };
 pub use error::{QrllibError, Result};
 pub use legacy_xmss::{
@@ -32,8 +32,9 @@ pub use legacy_xmss::{
 pub use mldsa::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
     ML_DSA_87_SIGNATURE_SIZE, MlDsa87, extract_message, extract_signature, open,
-    sign_with_secret_key as sign_mldsa_with_secret_key, validate_mldsa_public_key,
-    validate_mldsa_secret_key,
+    sign_with_secret_key as sign_mldsa_with_secret_key,
+    sign_with_secret_key_randomized as sign_mldsa_with_secret_key_randomized,
+    validate_mldsa_public_key, validate_mldsa_secret_key,
 };
 pub use mnemonic::{bin_to_mnemonic, mnemonic_to_bin};
 pub use seed::{ExtendedSeed, Seed};

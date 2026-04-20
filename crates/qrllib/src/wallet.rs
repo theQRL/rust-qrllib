@@ -8,6 +8,7 @@ use crate::{
     seed::{ExtendedSeed, Seed},
     wallet_type::WalletType,
 };
+use zeroize::Zeroizing;
 
 pub const ML_DSA_87_CONTEXT: &[u8] = b"ZOND";
 
@@ -91,7 +92,7 @@ impl MlDsa87Wallet {
         self.signer.public_key_bytes()
     }
 
-    pub fn secret_key(&self) -> [u8; crate::mldsa::ML_DSA_87_SECRET_KEY_SIZE] {
+    pub fn secret_key(&self) -> Zeroizing<[u8; crate::mldsa::ML_DSA_87_SECRET_KEY_SIZE]> {
         self.signer.secret_key_bytes()
     }
 
@@ -107,9 +108,22 @@ impl MlDsa87Wallet {
         self.signer.sign(ML_DSA_87_CONTEXT, message)
     }
 
+    /// Hedged (randomised) counterpart to [`MlDsa87Wallet::sign`]. Uses fresh
+    /// system randomness on every call; recommended for signers exposed to
+    /// fault-injection models.
+    pub fn sign_randomized(&self, message: &[u8]) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+        self.signer.sign_randomized(ML_DSA_87_CONTEXT, message)
+    }
+
     pub fn zeroize(&mut self) {
         self.seed.zeroize();
         self.signer.zeroize();
+    }
+}
+
+impl Drop for MlDsa87Wallet {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 

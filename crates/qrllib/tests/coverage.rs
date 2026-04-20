@@ -122,7 +122,7 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     let imported = Dilithium::from_hex_seed(&seed_hex).expect("imported signer");
     assert_eq!(generated.public_key_bytes(), imported.public_key_bytes());
     assert!(validate_dilithium_public_key(&imported.public_key_bytes()).is_ok());
-    assert!(validate_dilithium_secret_key(&imported.secret_key_bytes()).is_ok());
+    assert!(validate_dilithium_secret_key(imported.secret_key_bytes().as_slice()).is_ok());
 
     let message = b"legacy detached signatures in wasm";
     let signature = generated.sign(message).expect("signature");
@@ -143,7 +143,7 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     assert!(verify_dilithium_signature(message, &signature, &imported.public_key_bytes()));
     assert_eq!(
         signature,
-        sign_dilithium_with_secret_key(message, &imported.secret_key_bytes())
+        sign_dilithium_with_secret_key(message, imported.secret_key_bytes().as_slice())
             .expect("sign with secret key")
     );
     assert!(Dilithium::from_hex_seed("0x00").is_err());
@@ -158,7 +158,7 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     assert!(zeroized.seed().iter().all(|byte| *byte == 0));
     assert!(zeroized.secret_key_bytes().iter().all(|byte| *byte == 0));
     assert!(matches!(
-        sign_dilithium_with_secret_key(message, &zeroized.secret_key_bytes()),
+        sign_dilithium_with_secret_key(message, zeroized.secret_key_bytes().as_slice()),
         Err(QrllibError::DilithiumSecretKeyZeroized)
     ));
     assert!(matches!(

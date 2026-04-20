@@ -9,7 +9,7 @@ use sha3::{
     Shake128, Shake256,
     digest::{ExtendableOutput, Update, XofReader},
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const ML_DSA_87_CRYPTO_SEED_SIZE: usize = 32;
 pub const ML_DSA_87_PUBLIC_KEY_SIZE: usize = ML_DSA_87_CRYPTO_SEED_SIZE + K * POLY_T1_PACKED_BYTES;
@@ -41,6 +41,12 @@ const TAU: usize = 60;
 const BETA: i32 = 120;
 const GAMMA1: i32 = 1 << 19;
 const OMEGA: usize = 75;
+
+/// Upper bound on the rejection-sampling loop in `crypto_sign_signature`.
+/// FIPS 204 §E.2 gives an expected iteration count of ≈4.25; a cap three
+/// orders of magnitude above that is defensive against pathological inputs
+/// while never rejecting a well-formed call in practice.
+const REJECTION_BUDGET: u32 = 1024;
 
 const POLY_T1_PACKED_BYTES: usize = 320;
 const POLY_T0_PACKED_BYTES: usize = 416;
@@ -166,15 +172,39 @@ pub fn sign_with_secret_key(
     message: &[u8],
     secret_key: &[u8],
 ) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+    sign_with_secret_key_modal(context, message, secret_key, false)
+}
+
+/// Hedged-mode counterpart to [`sign_with_secret_key`]. Uses a fresh 32-byte
+/// system-random value in every call, making the nonce derivation non-deterministic.
+/// FIPS 204 §3.7 defines this as the recommended mode under fault-attack models.
+pub fn sign_with_secret_key_randomized(
+    context: &[u8],
+    message: &[u8],
+    secret_key: &[u8],
+) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+    sign_with_secret_key_modal(context, message, secret_key, true)
+}
+
+fn sign_with_secret_key_modal(
+    context: &[u8],
+    message: &[u8],
+    secret_key: &[u8],
+    randomized: bool,
+) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
     validate_mldsa_secret_key(secret_key)?;
-    if secret_key.iter().all(|byte| *byte == 0) {
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key.iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
         return Err(QrllibError::MlDsaSecretKeyZeroized);
     }
 
     let mut secret_key_bytes = [0_u8; ML_DSA_87_SECRET_KEY_SIZE];
     secret_key_bytes.copy_from_slice(secret_key);
     let mut signature = [0_u8; ML_DSA_87_SIGNATURE_SIZE];
-    crypto_sign_signature(&mut signature, context, message, &secret_key_bytes, false)?;
+    crypto_sign_signature(&mut signature, context, message, &secret_key_bytes, randomized)?;
     Ok(signature)
 }
 
@@ -209,12 +239,16 @@ impl MlDsa87 {
         self.public_key
     }
 
-    pub fn secret_key_bytes(&self) -> [u8; ML_DSA_87_SECRET_KEY_SIZE] {
-        self.secret_key
+    /// Returns a zeroizing copy of the packed secret key. The returned value
+    /// drops-clear on scope exit without requiring the caller to call
+    /// `.zeroize()` explicitly.
+    pub fn secret_key_bytes(&self) -> Zeroizing<[u8; ML_DSA_87_SECRET_KEY_SIZE]> {
+        Zeroizing::new(self.secret_key)
     }
 
-    pub fn seed(&self) -> [u8; ML_DSA_87_CRYPTO_SEED_SIZE] {
-        self.seed
+    /// Returns a zeroizing copy of the 32-byte ML-DSA crypto seed.
+    pub fn seed(&self) -> Zeroizing<[u8; ML_DSA_87_CRYPTO_SEED_SIZE]> {
+        Zeroizing::new(self.seed)
     }
 
     pub fn hex_seed(&self) -> String {
@@ -225,8 +259,22 @@ impl MlDsa87 {
         sign_with_secret_key(context, message, &self.secret_key)
     }
 
+    /// Hedged (randomised) counterpart to [`MlDsa87::sign`] per FIPS 204 §3.7.
+    pub fn sign_randomized(
+        &self,
+        context: &[u8],
+        message: &[u8],
+    ) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+        sign_with_secret_key_randomized(context, message, &self.secret_key)
+    }
+
     pub fn seal(&self, context: &[u8], message: &[u8]) -> Result<Vec<u8>> {
         crypto_sign_mldsa(message, context, &self.secret_key, false)
+    }
+
+    /// Hedged (randomised) counterpart to [`MlDsa87::seal`].
+    pub fn seal_randomized(&self, context: &[u8], message: &[u8]) -> Result<Vec<u8>> {
+        crypto_sign_mldsa(message, context, &self.secret_key, true)
     }
 
     pub fn verify(
@@ -241,6 +289,12 @@ impl MlDsa87 {
     pub fn zeroize(&mut self) {
         self.secret_key.zeroize();
         self.seed.zeroize();
+    }
+}
+
+impl Drop for MlDsa87 {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1071,6 +1125,12 @@ fn crypto_sign_keypair(
 
     shake256(&mut tr, public_key);
     pack_sk(secret_key, &rho, &tr, &key, &t0, &s1, &s2);
+
+    key.zeroize();
+    rho_prime.zeroize();
+    zero_poly_vec_l(&mut s1);
+    zero_poly_vec_k(&mut s2);
+    zero_poly_vec_k(&mut t0);
 }
 
 fn crypto_sign_signature(
@@ -1121,7 +1181,7 @@ fn crypto_sign_signature(
         poly_vec_k_ntt(&mut s2);
         poly_vec_k_ntt(&mut t0);
 
-        loop {
+        for _ in 0..REJECTION_BUDGET {
             poly_vec_l_uniform_gamma1(&mut y, &rho_prime, nonce);
             nonce = nonce.wrapping_add(1);
 
@@ -1178,6 +1238,7 @@ fn crypto_sign_signature(
             pack_sig(signature, &challenge, &z, &hints);
             return Ok(());
         }
+        Err(QrllibError::RejectionBudgetExceeded(REJECTION_BUDGET))
     })();
 
     key.zeroize();
@@ -1196,6 +1257,14 @@ fn crypto_sign_mldsa(
     secret_key: &[u8; ML_DSA_87_SECRET_KEY_SIZE],
     randomized_signing: bool,
 ) -> Result<Vec<u8>> {
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key.iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
+        return Err(QrllibError::MlDsaSecretKeyZeroized);
+    }
+
     let mut signed_message = vec![0_u8; ML_DSA_87_SIGNATURE_SIZE + message.len()];
     signed_message[ML_DSA_87_SIGNATURE_SIZE..].copy_from_slice(message);
     let mut signature = [0_u8; ML_DSA_87_SIGNATURE_SIZE];
@@ -1333,7 +1402,7 @@ mod tests {
         );
         assert_eq!(
             signature,
-            sign_with_secret_key(context, message, &signer.secret_key_bytes())
+            sign_with_secret_key(context, message, signer.secret_key_bytes().as_slice())
                 .expect("sign with secret key")
         );
 
@@ -1380,5 +1449,43 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn mldsa87_randomized_signing_produces_varying_but_valid_signatures() {
+        let signer = MlDsa87::from_seed([11_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+        let context = b"ctx";
+        let message = b"randomised signing smoke";
+
+        let deterministic_a = signer.sign(context, message).expect("deterministic a");
+        let deterministic_b = signer.sign(context, message).expect("deterministic b");
+        assert_eq!(
+            deterministic_a, deterministic_b,
+            "deterministic mode must produce the same signature twice"
+        );
+
+        let hedged_a = signer.sign_randomized(context, message).expect("hedged a");
+        let hedged_b = signer.sign_randomized(context, message).expect("hedged b");
+        assert_ne!(hedged_a, hedged_b, "hedged mode must draw fresh randomness");
+        assert_ne!(hedged_a, deterministic_a, "hedged output differs from deterministic");
+
+        // Both hedged signatures verify under the same public key and context.
+        assert!(signer.verify(context, message, &hedged_a).expect("verify hedged a"));
+        assert!(signer.verify(context, message, &hedged_b).expect("verify hedged b"));
+
+        // Sealed (message-attached) variants also randomise.
+        let sealed_a = signer.seal_randomized(context, message).expect("seal a");
+        let sealed_b = signer.seal_randomized(context, message).expect("seal b");
+        assert_ne!(sealed_a, sealed_b);
+    }
+
+    #[test]
+    fn mldsa87_seal_rejects_zeroized_secret_key() {
+        let mut signer = MlDsa87::from_seed([13_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+        signer.zeroize();
+        assert!(matches!(
+            signer.seal(b"ctx", b"after zeroize"),
+            Err(QrllibError::MlDsaSecretKeyZeroized)
+        ));
     }
 }

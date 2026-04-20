@@ -69,6 +69,12 @@ impl Seed {
     }
 }
 
+impl Drop for Seed {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
 impl ExtendedSeed {
     pub fn new(descriptor: Descriptor, seed: &Seed) -> Result<Self> {
         descriptor.validate()?;
@@ -119,5 +125,11 @@ impl ExtendedSeed {
 
     pub fn zeroize(&mut self) {
         self.0.zeroize();
+    }
+}
+
+impl Drop for ExtendedSeed {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }

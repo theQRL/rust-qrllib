@@ -6,7 +6,7 @@ use sha3::{
     Shake256,
     digest::{ExtendableOutput, Update, XofReader},
 };
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 pub const SPHINCS_PLUS_256S_N: usize = 32;
 const SPX_FULL_HEIGHT: u32 = 64;
@@ -677,6 +677,8 @@ fn crypto_sign_seed_keypair(
 
     merkle_gen_root(&mut secret_key[3 * SPHINCS_PLUS_256S_N..], &ctx);
     public_key[SPHINCS_PLUS_256S_N..].copy_from_slice(&secret_key[3 * SPHINCS_PLUS_256S_N..]);
+
+    ctx.sk_seed.zeroize();
 }
 
 fn fill_random_optrand(output: &mut [u8; SPHINCS_PLUS_256S_N]) -> Result<()> {
@@ -690,6 +692,14 @@ fn crypto_sign_signature(
     secret_key: &[u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE],
     optrand_override: Option<&[u8; SPHINCS_PLUS_256S_N]>,
 ) -> Result<()> {
+    let mut any_nonzero = 0_u8;
+    for byte in secret_key.iter() {
+        any_nonzero |= byte;
+    }
+    if any_nonzero == 0 {
+        return Err(QrllibError::SphincsPlusSecretKeyZeroized);
+    }
+
     let sk_prf = &secret_key[SPHINCS_PLUS_256S_N..2 * SPHINCS_PLUS_256S_N];
     let pk = &secret_key[2 * SPHINCS_PLUS_256S_N..4 * SPHINCS_PLUS_256S_N];
 
@@ -711,8 +721,10 @@ fn crypto_sign_signature(
 
     if let Some(optrand) = optrand_override {
         opt_rand.copy_from_slice(optrand);
-    } else {
-        fill_random_optrand(&mut opt_rand)?;
+    } else if let Err(error) = fill_random_optrand(&mut opt_rand) {
+        ctx.sk_seed.zeroize();
+        opt_rand.zeroize();
+        return Err(error);
     }
     gen_message_random(&mut sig[..SPHINCS_PLUS_256S_N], sk_prf, &opt_rand, message);
     hash_message(
@@ -759,6 +771,7 @@ fn crypto_sign_signature(
     }
 
     ctx.sk_seed.zeroize();
+    opt_rand.zeroize();
     Ok(())
 }
 
@@ -909,16 +922,18 @@ impl SphincsPlus256s {
         Ok(Self::from_seed(seed))
     }
 
-    pub fn seed(&self) -> [u8; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE] {
-        self.seed
+    /// Returns a zeroizing copy of the SPHINCS+ seed material.
+    pub fn seed(&self) -> Zeroizing<[u8; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE]> {
+        Zeroizing::new(self.seed)
     }
 
     pub fn public_key_bytes(&self) -> [u8; SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE] {
         self.pk
     }
 
-    pub fn secret_key_bytes(&self) -> [u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE] {
-        self.sk
+    /// Returns a zeroizing copy of the packed secret key.
+    pub fn secret_key_bytes(&self) -> Zeroizing<[u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE]> {
+        Zeroizing::new(self.sk)
     }
 
     pub fn hex_seed(&self) -> String {
@@ -938,6 +953,12 @@ impl SphincsPlus256s {
     pub fn zeroize(&mut self) {
         self.seed.zeroize();
         self.sk.zeroize();
+    }
+}
+
+impl Drop for SphincsPlus256s {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 
@@ -1083,5 +1104,19 @@ mod tests {
         zeroized.zeroize();
         assert!(zeroized.seed().iter().all(|byte| *byte == 0));
         assert!(zeroized.secret_key_bytes().iter().all(|byte| *byte == 0));
+    }
+
+    #[test]
+    fn sphincsplus_sign_and_seal_reject_zeroized_secret_key() {
+        let mut signer = SphincsPlus256s::from_seed(known_seed());
+        signer.zeroize();
+        assert!(matches!(
+            signer.sign(b"after zeroize"),
+            Err(QrllibError::SphincsPlusSecretKeyZeroized)
+        ));
+        assert!(matches!(
+            signer.seal(b"after zeroize"),
+            Err(QrllibError::SphincsPlusSecretKeyZeroized)
+        ));
     }
 }

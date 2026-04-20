@@ -47,6 +47,9 @@ pub enum QrllibError {
     #[error("invalid ML-DSA signature size {0}, expected {1}")]
     InvalidSignatureSize(usize, usize),
 
+    #[error("signing rejection budget exceeded after {0} iterations")]
+    RejectionBudgetExceeded(u32),
+
     #[error("invalid Dilithium public key size {0}, expected {1}")]
     InvalidDilithiumPublicKeySize(usize, usize),
 
@@ -55,6 +58,12 @@ pub enum QrllibError {
 
     #[error("Dilithium secret key is zeroized")]
     DilithiumSecretKeyZeroized,
+
+    #[error("SPHINCS+ secret key is zeroized")]
+    SphincsPlusSecretKeyZeroized,
+
+    #[error("XMSS secret key is zeroized")]
+    XmssSecretKeyZeroized,
 
     #[error("invalid word in mnemonic")]
     InvalidMnemonicWord,

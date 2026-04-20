@@ -12,6 +12,7 @@ use crate::{
     },
     wallet_type::WalletType,
 };
+use zeroize::Zeroizing;
 
 #[derive(Clone, Debug)]
 pub struct SphincsPlus256sWallet {
@@ -96,7 +97,7 @@ impl SphincsPlus256sWallet {
         self.signer.public_key_bytes()
     }
 
-    pub fn secret_key(&self) -> [u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE] {
+    pub fn secret_key(&self) -> Zeroizing<[u8; SPHINCS_PLUS_256S_SECRET_KEY_SIZE]> {
         self.signer.secret_key_bytes()
     }
 
@@ -119,6 +120,12 @@ impl SphincsPlus256sWallet {
     pub fn zeroize(&mut self) {
         self.seed.zeroize();
         self.signer.zeroize();
+    }
+}
+
+impl Drop for SphincsPlus256sWallet {
+    fn drop(&mut self) {
+        self.zeroize();
     }
 }
 

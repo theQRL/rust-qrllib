@@ -73,9 +73,11 @@ Common wallet accessors:
 
 | Type | Accessors |
 |------|-----------|
-| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `zeroize` |
+| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `sign_randomized`, `zeroize` |
 | `SphincsPlus256sWallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `seal`, `zeroize` |
 | `LegacyXmssWallet` | `height`, `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `root`, `public_key`, `secret_key`, `address`, `index`, `set_index`, `sign`, `descriptor`, `zeroize` |
+
+Accessors that return secret material (`seed`, `secret_key`, `secret_key_bytes`) hand back `zeroize::Zeroizing<T>` values that clear on drop. They dereference transparently to the underlying byte array or `Vec<u8>`, so passing them to `hex::encode`, `Sha256::digest`, `.iter()`, or the verify helpers works unchanged. Explicit `.zeroize()` remains available, and every secret-bearing wallet and signer type now also implements `Drop` that zeroizes on scope exit — forgetting to call `.zeroize()` no longer leaves residual secrets in memory.
 
 ML-DSA-87 wallet round trip:
 
@@ -156,9 +158,9 @@ Common low-level methods:
 
 | Type | Constructors and accessors |
 |------|---------------------------|
-| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `seal`, `verify`, `zeroize` |
+| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_randomized`, `seal`, `seal_randomized`, `verify`, `zeroize` |
 | `SphincsPlus256s` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `seal`, `zeroize` |
-| `Dilithium` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `seal`, `verify`, `zeroize` |
+| `Dilithium` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_randomized`, `seal`, `seal_randomized`, `verify`, `zeroize` |
 | `Xmss` | `initialize_tree`, `seed`, `secret_key`, `public_seed`, `root`, `public_key`, `hash_function`, `height`, `index`, `set_index`, `sign`, `zeroize` |
 
 Low-level verification and sealed-message helpers:
@@ -166,12 +168,14 @@ Low-level verification and sealed-message helpers:
 | API | Purpose |
 |-----|---------|
 | `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context |
-| `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context |
+| `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (deterministic) |
+| `sign_mldsa_with_secret_key_randomized` | Hedged-mode counterpart — fresh 32-byte system randomness per call (FIPS 204 §3.7) |
 | `open`, `extract_message`, `extract_signature` | ML-DSA-87 sealed-message helpers |
 | `verify_sphincsplus_signature` | Verify detached SPHINCS+ signatures |
 | `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ sealed-message helpers |
 | `verify_dilithium_signature` | Verify detached legacy Dilithium signatures |
-| `sign_dilithium_with_secret_key` | Stateless legacy Dilithium secret-key signing |
+| `sign_dilithium_with_secret_key` | Stateless legacy Dilithium secret-key signing (deterministic) |
+| `sign_dilithium_with_secret_key_randomized` | Hedged-mode counterpart |
 | `dilithium_open`, `dilithium_extract_message`, `dilithium_extract_signature` | Dilithium sealed-message helpers |
 | `verify_xmss`, `verify_xmss_with_custom_wots_param_w` | Verify lower-level XMSS signatures |
 
@@ -189,6 +193,32 @@ Low-level verification and sealed-message helpers:
 | `get_xmss_address_from_pk`, `is_valid_xmss_address` | Legacy XMSS address helpers |
 | `bin_to_mnemonic`, `mnemonic_to_bin` | QRL wordlist conversion helpers |
 | `QrllibError`, `Result` | Shared error and result types |
+
+### Deterministic vs Hedged Signing
+
+ML-DSA-87 and Dilithium expose both signing modes per FIPS 204 §3.7:
+
+- **`sign` / `seal`** use deterministic nonce derivation (`rnd = 0` plumbed through the FIPS 204 nonce construction). Two calls with the same seed and message produce byte-identical signatures. This is the mode the project's ACVP and cross-verification test vectors are pinned to.
+- **`sign_randomized` / `seal_randomized`** draw fresh system randomness on every call, producing a different signature each time. FIPS 204 recommends this mode on signers exposed to fault-injection attacks (hardware wallets, untrusted execution environments). Verification is identical — a hedged signature verifies under the same public key as a deterministic one.
+
+SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; no explicit `_randomized` method is needed.
+
+### Safe XMSS Usage
+
+XMSS is a **stateful** scheme. Signing two different messages under the same OTS index causes irreversible compromise of the one-time WOTS chains at that position. The library takes a two-part approach:
+
+1. The type system forbids cloning: `Xmss` and `LegacyXmssWallet` do not implement `Clone`. Accidental duplication (and the resulting immediate index reuse) is a compile error.
+2. Everything else — index persistence, backup-and-restore reconciliation, single-writer discipline across processes or threads, and key rotation before tree exhaustion — is the **application's responsibility**. See [SECURITY.md](SECURITY.md) for the full threat model and operational checklist.
+
+If you serialise the secret-key bytes via `wallet.secret_key()` and re-instantiate later, you must make absolutely sure the new instance starts at an OTS index greater than or equal to the highest used index. The library cannot enforce this across process or device boundaries.
+
+### Keeping Secrets in Memory for the Minimum Time
+
+Every secret-bearing type (`Seed`, `ExtendedSeed`, `MlDsa87`, `Dilithium`, `SphincsPlus256s`, `Xmss`, `MlDsa87Wallet`, `SphincsPlus256sWallet`, `LegacyXmssWallet`) implements `Drop` that zeroizes the backing buffer. You do not need to call `.zeroize()` explicitly for the happy-path — the value clears when it goes out of scope. Explicit `.zeroize()` remains available for long-lived signers that want to wipe their state mid-lifetime.
+
+Owned-secret accessors (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies also clear on drop.
+
+If, after an explicit `.zeroize()`, you call `sign` or `seal` on a still-reachable signer, the library returns `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized` rather than producing a bogus signature from the all-zero key.
 
 ## WebAssembly API
 
@@ -249,7 +279,30 @@ type DilithiumSnapshot = {
 }
 ```
 
-### Wasm Function Map
+### Handle-Based Wasm API (preferred)
+
+The handle-based API accepts the extended seed (or parameters) **once**, stores the wallet inside wasm linear memory, and returns a `u32` handle. Subsequent sign / snapshot calls pass the handle — the seed hex string does not have to live on the JavaScript heap between operations. On `close_wallet(handle)` the wallet's `Drop` runs and zeroizes the stored secret state.
+
+| Function | Purpose |
+|----------|---------|
+| `create_mldsa_wallet()` | Generate a fresh ML-DSA-87 wallet, return a handle |
+| `open_mldsa_wallet(extendedSeedHex)` | Restore an ML-DSA-87 wallet from its extended seed, return a handle |
+| `create_sphincsplus_wallet()` | Generate a fresh SPHINCS+-256s wallet, return a handle |
+| `open_sphincsplus_wallet(extendedSeedHex)` | Restore a SPHINCS+-256s wallet, return a handle |
+| `create_legacy_xmss_wallet(height, hashFunction)` | Generate a fresh legacy XMSS wallet, return a handle |
+| `open_legacy_xmss_wallet(extendedSeedHex, index)` | Restore a legacy XMSS wallet at an explicit OTS index, return a handle |
+| `create_dilithium_signer()` | Generate a fresh legacy Dilithium signer, return a handle |
+| `open_dilithium_signer(seedHex)` | Restore a legacy Dilithium signer, return a handle |
+| `wallet_snapshot(handle)` | Return the wallet's snapshot JSON |
+| `wallet_sign(handle, message)` | Sign `message` with the wallet. Advances the OTS index for legacy-XMSS entries |
+| `close_wallet(handle)` | Remove the registry entry; `Drop` zeroizes the stored secret |
+| `close_all_wallets()` | Remove every registry entry — intended for page teardown |
+
+Browser callers should prefer this API: the seed crosses the wasm/JS boundary exactly once at `open_*_wallet` time. The handle is a plain `u32`; JavaScript numbers represent it without precision loss.
+
+### Legacy String-Based Wasm API
+
+These entry points are retained for backwards compatibility. They re-decode the seed on every signing call and are superseded by the handle-based API above for new consumers.
 
 | Function | Purpose |
 |----------|---------|
@@ -274,6 +327,37 @@ Supported XMSS `hashFunction` strings are `sha2_256`, `shake128`, and `shake256`
 
 ### Browser Usage
 
+Recommended — handle-based API (seed crosses the wasm/JS boundary only once):
+
+```ts
+import init, {
+  create_mldsa_wallet,
+  wallet_snapshot,
+  wallet_sign,
+  close_wallet,
+  verify_message,
+} from './pkg/qrllib_wasm'
+
+await init()
+
+const handle = create_mldsa_wallet()
+try {
+  const snapshot = wallet_snapshot(handle)
+  const signed = wallet_sign(handle, 'The sleeper must awaken')
+  const ok = verify_message(
+    snapshot.publicKeyHex,
+    snapshot.descriptorHex,
+    'The sleeper must awaken',
+    signed.signatureHex,
+  )
+  console.assert(ok)
+} finally {
+  close_wallet(handle) // zeroizes the in-wasm wallet state
+}
+```
+
+Legacy string-per-call pattern (still works, retained for compatibility):
+
 ```ts
 import init, {
   generate_wallet,
@@ -295,7 +379,7 @@ const ok = verify_message(
 console.assert(ok)
 ```
 
-The Vue demo keeps a typed wrapper in `demo/src/qrllib.ts` that mirrors the wasm exports.
+The Vue demo keeps a typed wrapper in `demo/src/qrllib.ts` that mirrors the wasm exports; as of audit revision 1.2 it continues to target the legacy string-based path, and migrating to the handle API is tracked as a follow-on task.
 
 ## Browser Demo
 
@@ -303,7 +387,7 @@ The demo builds the wasm package locally before Vite compiles the Vue app.
 
 ```bash
 cd demo
-npm install
+npm ci
 npm run build
 ```
 
@@ -320,23 +404,23 @@ The GitHub Pages workflow builds the same app and publishes `demo/dist`.
 
 XMSS is stateful. Reusing an XMSS OTS index can completely break signature security.
 
-Safe XMSS usage requires:
+The library provides a narrow type-level guard: `Xmss` and `LegacyXmssWallet` do not implement `Clone`, so accidental duplication of a stateful signer is a compile error. Every other part of the contract is the application's responsibility:
 
 - Never reuse an index.
 - Persist the updated index before using or broadcasting a signature.
 - Never sign concurrently from the same XMSS wallet.
-- Never restore a wallet from backup without validating the highest used index.
+- Never restore a wallet from backup without reconciling the highest used index.
 - Rotate keys before the tree is exhausted.
 
-For new applications, prefer ML-DSA-87 or SPHINCS+-256s robust.
+For new applications, prefer ML-DSA-87 or SPHINCS+-256s robust. See [SECURITY.md](SECURITY.md) and the **Safe XMSS Usage** subsection in the Native Rust API for the full operational checklist.
 
 ## Verification
 
 ```bash
 cargo fmt --all -- --check
-cargo test --workspace
-cargo clippy --workspace --all-targets --all-features -- -D warnings
-cargo llvm-cov --package qrllib --summary-only
+cargo test --workspace --locked
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo llvm-cov --locked --package qrllib --summary-only
 cd demo && npm run build
 ```
 
@@ -345,6 +429,7 @@ Additional CI coverage:
 - ML-DSA-87 is an in-repo Rust port of the `go-qrllib` implementation, not a wrapper around a packaged ML-DSA crate.
 - ML-DSA-87 ACVP vectors are pulled from NIST ACVP-Server at workflow runtime.
 - Dilithium, ML-DSA-87, SPHINCS+, and XMSS are cross-verified against external reference implementations.
+- Rust and npm direct dependencies are exact-pinned, CI uses lockfile-enforced installs, and GitHub Actions are pinned by commit SHA.
 - `cargo audit` and `cargo deny` enforce supply-chain checks.
 
 ## Security

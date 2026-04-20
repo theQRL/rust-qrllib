@@ -23,9 +23,9 @@ Supported algorithms:
 The main checks are:
 
 - `cargo fmt --all -- --check`
-- `cargo test --workspace`
-- `cargo clippy --workspace --all-targets --all-features -- -D warnings`
-- `cargo llvm-cov --package qrllib --summary-only`
+- `cargo test --workspace --locked`
+- `cargo clippy --workspace --all-targets --all-features --locked -- -D warnings`
+- `cargo llvm-cov --locked --package qrllib --summary-only`
 - `cd demo && npm run build`
 
 Additional workflow coverage:
@@ -33,6 +33,7 @@ Additional workflow coverage:
 - `acvp.yml`: ML-DSA-87 keygen/signing against NIST ACVP vectors
 - `cross-verify.yml`: reference implementation interoperability for Dilithium, ML-DSA-87, SPHINCS+, and XMSS
 - `security.yml`: `cargo audit`, `cargo deny`, and dependency review
+- Rust/npm direct dependencies are exact-pinned; GitHub Actions are SHA-pinned with version comments
 - `pages.yml`: Vue/Tailwind demo build and GitHub Pages deployment
 - `release.yml`: release-plz, checksums, SBOMs, attestations, and SLSA provenance
 
