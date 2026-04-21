@@ -22,6 +22,26 @@ fn descriptor_wallet_type_and_address_validation_paths_are_exercised() {
     assert!(!invalid_descriptor.is_valid());
     assert!(invalid_descriptor.validate().is_err());
     assert!(Descriptor::from_bytes(&[1, 2]).is_err());
+
+    for nonzero_metadata in [
+        [WalletType::MlDsa87.code(), 0x01, 0x00],
+        [WalletType::MlDsa87.code(), 0x00, 0x01],
+        [WalletType::MlDsa87.code(), 0xff, 0xff],
+        [WalletType::SphincsPlus256s.code(), 0x01, 0x00],
+        [WalletType::SphincsPlus256s.code(), 0x00, 0x01],
+        [WalletType::SphincsPlus256s.code(), 0xff, 0xff],
+    ] {
+        let descriptor = Descriptor::new(nonzero_metadata);
+        assert!(
+            !descriptor.is_valid(),
+            "descriptor with non-zero metadata bytes must be rejected: {nonzero_metadata:?}"
+        );
+        assert!(descriptor.validate().is_err());
+        assert!(
+            ExtendedSeed::new(descriptor, &Seed::from_bytes(&[0_u8; SEED_SIZE]).unwrap()).is_err()
+        );
+        assert!(get_address(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE], descriptor).is_err());
+    }
     assert!(matches!(WalletType::try_from(9), Err(QrllibError::UnknownWalletType(9))));
     assert_eq!(WalletType::MlDsa87.expected_public_key_size(), ML_DSA_87_PUBLIC_KEY_SIZE);
     assert_eq!(WalletType::SphincsPlus256s.expected_public_key_size(), 64);
@@ -193,6 +213,24 @@ fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
         &generated_wallet.public_key(),
         Descriptor::new([0, 0, 0]),
     ));
+    assert!(
+        !verify_mldsa87_wallet_signature(
+            b"browser signing flow",
+            &signature,
+            &generated_wallet.public_key(),
+            Descriptor::new([WalletType::MlDsa87.code(), 0x01, 0x00]),
+        ),
+        "non-canonical ML-DSA-87 descriptor must not verify"
+    );
+    assert!(
+        !verify_mldsa87_wallet_signature(
+            b"browser signing flow",
+            &signature,
+            &generated_wallet.public_key(),
+            Descriptor::new([WalletType::MlDsa87.code(), 0x00, 0xff]),
+        ),
+        "non-canonical ML-DSA-87 descriptor must not verify"
+    );
 
     let wallet_hex = wallet.hex_seed().expect("wallet hex");
     let wallet_from_extended_hex =

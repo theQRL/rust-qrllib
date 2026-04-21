@@ -39,7 +39,11 @@ impl Descriptor {
     }
 
     pub fn is_valid(self) -> bool {
-        self.wallet_type().is_ok()
+        // Descriptor bytes 1–2 are a backwards-compatibility surface from
+        // the legacy XMSS address format and are unused for ML-DSA-87 and
+        // SPHINCS+-256s. Until a future schema formally defines them, only
+        // the canonical `{type, 0x00, 0x00}` shape is accepted.
+        self.wallet_type().is_ok() && self.0[1] == 0 && self.0[2] == 0
     }
 
     pub fn metadata(self) -> [u8; 2] {

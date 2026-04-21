@@ -28,6 +28,7 @@ pub fn unsafe_get_address(public_key: &[u8], descriptor: Descriptor) -> [u8; ADD
 }
 
 pub fn get_address(public_key: &[u8], descriptor: Descriptor) -> Result<[u8; ADDRESS_SIZE]> {
+    let descriptor = descriptor.validate()?;
     let wallet_type = descriptor.wallet_type()?;
     let expected_size = wallet_type.expected_public_key_size();
 

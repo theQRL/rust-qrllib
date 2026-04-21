@@ -25,7 +25,7 @@ pub fn verify_mldsa87_wallet_signature(
     public_key: &[u8],
     descriptor: Descriptor,
 ) -> bool {
-    if !matches!(descriptor.wallet_type(), Ok(WalletType::MlDsa87)) {
+    if !descriptor.is_valid() || !matches!(descriptor.wallet_type(), Ok(WalletType::MlDsa87)) {
         return false;
     }
 
