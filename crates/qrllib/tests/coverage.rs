@@ -5,8 +5,8 @@ use qrllib::{
     ML_DSA_87_SIGNATURE_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, SEED_SIZE,
     SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed, SphincsPlus256s, SphincsPlus256sWallet, WalletType,
     bin_to_mnemonic, dilithium_extract_message, dilithium_extract_signature, dilithium_open,
-    extract_message, extract_signature, format_address, get_address, is_valid_address,
-    enable_experimental_sphincsplus_issuance_for_testing, mnemonic_to_bin, open,
+    enable_experimental_sphincsplus_issuance_for_testing, extract_message, extract_signature,
+    format_address, get_address, is_valid_address, mnemonic_to_bin, open,
     sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_deterministic,
     validate_dilithium_public_key, validate_dilithium_secret_key, validate_mldsa_public_key,
     validate_mldsa_secret_key, verify_dilithium_signature, verify_mldsa87_wallet_signature,
@@ -108,7 +108,8 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
     let signature = generated.sign(b"context", message).expect("signature");
     assert_eq!(signature.len(), ML_DSA_87_SIGNATURE_SIZE);
     assert_eq!(
-        extract_message(&generated.sign_attached(b"context", message).expect("sealed")).expect("message"),
+        extract_message(&generated.sign_attached(b"context", message).expect("sealed"))
+            .expect("message"),
         message
     );
     assert_eq!(extract_signature(&signature).expect("signature slice"), signature);
@@ -168,7 +169,8 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     let signature = generated.sign_deterministic(message).expect("signature");
     assert_eq!(signature.len(), DILITHIUM_SIGNATURE_SIZE);
     assert_eq!(
-        dilithium_extract_message(&generated.sign_attached(message).expect("sealed")).expect("message"),
+        dilithium_extract_message(&generated.sign_attached(message).expect("sealed"))
+            .expect("message"),
         message
     );
     assert_eq!(dilithium_extract_signature(&signature).expect("signature slice"), signature);

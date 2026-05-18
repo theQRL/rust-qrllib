@@ -1465,9 +1465,11 @@ mod tests {
         let message = b"deterministic legacy dilithium";
         // Free-fn + instance comparison requires deterministic mode for
         // byte-equality post TOB-QRLLIB-6 (hedged-by-default).
-        let signature =
-            sign_dilithium_with_secret_key_deterministic(message, signer.secret_key_bytes().as_slice())
-                .expect("sign with secret key");
+        let signature = sign_dilithium_with_secret_key_deterministic(
+            message,
+            signer.secret_key_bytes().as_slice(),
+        )
+        .expect("sign with secret key");
         assert_eq!(signature, signer.sign_deterministic(message).expect("instance sign"));
         assert!(verify_dilithium_signature(message, &signature, &signer.public_key_bytes()));
 

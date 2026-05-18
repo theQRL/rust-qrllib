@@ -15,9 +15,7 @@
 
 use std::{fs, process::ExitCode};
 
-use qrllib::xmss::rfc8391::{
-    self, EXPANDED_SEED_SIZE, ParameterSet, RFC_PUBLIC_KEY_SIZE,
-};
+use qrllib::xmss::rfc8391::{self, EXPANDED_SEED_SIZE, ParameterSet, RFC_PUBLIC_KEY_SIZE};
 
 const PK_SIZE: usize = 64; // root (32) || pub_seed (32)
 

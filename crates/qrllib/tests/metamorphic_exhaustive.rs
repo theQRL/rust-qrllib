@@ -216,9 +216,8 @@ fn metamorphic_secret_key_mauling_feature_scan() {
                 let mut mauled_sk = [0_u8; ML_DSA_87_SECRET_KEY_SIZE];
                 mauled_sk.copy_from_slice(&mauled);
 
-                let sig =
-                    sign_with_secret_key_deterministic(&vec.ctx, &vec.message, &mauled_sk)
-                        .expect("sign mauled sk");
+                let sig = sign_with_secret_key_deterministic(&vec.ctx, &vec.message, &mauled_sk)
+                    .expect("sign mauled sk");
 
                 if sig == base {
                     same_sig_count += 1;

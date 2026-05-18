@@ -281,14 +281,7 @@ impl Xmss {
         // (the input to the keypair-derivation core); QRL `initialize_tree`
         // would have stored the 48-byte caller-supplied seed instead.
         // Either way, `seed()` round-trips for the consumer.
-        Ok(Self {
-            xmss_params,
-            hash_function,
-            height,
-            seed: expanded_seed.to_vec(),
-            sk,
-            bds_state,
-        })
+        Ok(Self { xmss_params, hash_function, height, seed: expanded_seed.to_vec(), sk, bds_state })
     }
 
     /// Returns a zeroizing copy of the XMSS seed. The returned value

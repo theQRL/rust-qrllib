@@ -314,11 +314,7 @@ impl MlDsa87 {
     /// FIPS 204 §3.5 deterministic-mode counterpart to
     /// [`MlDsa87::sign_attached`]. Same caveats as
     /// [`MlDsa87::sign_deterministic`].
-    pub fn sign_attached_deterministic(
-        &self,
-        context: &[u8],
-        message: &[u8],
-    ) -> Result<Vec<u8>> {
+    pub fn sign_attached_deterministic(&self, context: &[u8], message: &[u8]) -> Result<Vec<u8>> {
         crypto_sign_mldsa(message, context, &self.secret_key, false)
     }
 

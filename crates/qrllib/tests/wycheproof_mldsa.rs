@@ -14,9 +14,7 @@
 
 use std::{env, fs, path::PathBuf};
 
-use qrllib::{
-    ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, mldsa::verify_bytes,
-};
+use qrllib::{ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, mldsa::verify_bytes};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -64,10 +62,10 @@ fn wycheproof_mldsa87_verify_matches_expected_outcomes() {
     };
 
     let path = vectors_dir.join("mldsa_87_verify_test.json");
-    let data = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
-    let file: WycheproofVerifyFile = serde_json::from_str(&data)
-        .unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
+    let data =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {}: {}", path.display(), e));
+    let file: WycheproofVerifyFile =
+        serde_json::from_str(&data).unwrap_or_else(|e| panic!("parse {}: {}", path.display(), e));
 
     assert_eq!(file.algorithm, "ML-DSA-87", "unexpected algorithm in vector file");
     assert!(!file.test_groups.is_empty(), "no test groups in vector file");
@@ -96,15 +94,12 @@ fn wycheproof_mldsa87_verify_matches_expected_outcomes() {
         let pk_length_ok = pk_bytes.len() == ML_DSA_87_PUBLIC_KEY_SIZE;
 
         for tc in &group.tests {
-            let msg = hex::decode(&tc.msg).unwrap_or_else(|e| {
-                panic!("g{}_tc{}: invalid msg hex: {}", gi, tc.tc_id, e)
-            });
-            let sig = hex::decode(&tc.sig).unwrap_or_else(|e| {
-                panic!("g{}_tc{}: invalid sig hex: {}", gi, tc.tc_id, e)
-            });
-            let ctx = hex::decode(&tc.ctx).unwrap_or_else(|e| {
-                panic!("g{}_tc{}: invalid ctx hex: {}", gi, tc.tc_id, e)
-            });
+            let msg = hex::decode(&tc.msg)
+                .unwrap_or_else(|e| panic!("g{}_tc{}: invalid msg hex: {}", gi, tc.tc_id, e));
+            let sig = hex::decode(&tc.sig)
+                .unwrap_or_else(|e| panic!("g{}_tc{}: invalid sig hex: {}", gi, tc.tc_id, e));
+            let ctx = hex::decode(&tc.ctx)
+                .unwrap_or_else(|e| panic!("g{}_tc{}: invalid ctx hex: {}", gi, tc.tc_id, e));
 
             // Mirror go-qrllib: wrong-length pk or sig is rejected at
             // the API boundary, which is also what `verify_bytes`

@@ -110,7 +110,8 @@ fn bytes_to_addr(bytes: &[u8]) -> [u32; 8] {
         // shape — a tripwire against any future refactor that swaps the
         // chunk source for one with a different length guarantee. See
         // `SECURITY.md` "Audit-derived design choices" for the policy.
-        addr[index] = u32::from_be_bytes(chunk.try_into().expect("chunks_exact(4) guarantees 4-byte chunks"));
+        addr[index] =
+            u32::from_be_bytes(chunk.try_into().expect("chunks_exact(4) guarantees 4-byte chunks"));
     }
     addr
 }

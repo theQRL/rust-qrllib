@@ -5,6 +5,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Default deny — each job below opts in to the exact permissions it needs
+# rather than inheriting a workflow-wide blanket.
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -16,8 +19,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
     permissions:
-      contents: write
-      pull-requests: write
+      contents: write       # release-plz commits version bumps and updated CHANGELOG.md to the release branch
+      pull-requests: write  # release-plz opens the release PR
     concurrency:
       group: release-plz-${{ github.ref }}
       cancel-in-progress: false
@@ -49,8 +52,8 @@ jobs:
     runs-on: ubuntu-latest
     if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
     permissions:
-      contents: write
-      pull-requests: read
+      contents: write       # release-plz creates the git tag + GitHub release
+      pull-requests: read   # release-plz reads PR labels to decide release notes
     outputs:
       releases_created: ${{ steps.release-plz.outputs.releases_created }}
       releases: ${{ steps.release-plz.outputs.releases }}
@@ -85,17 +88,14 @@ jobs:
     needs: release
     if: needs.release.outputs.releases_created == 'true'
     permissions:
-      contents: write
-      id-token: write      # For Sigstore OIDC
-      attestations: write  # For GitHub attestations
+      contents: write       # upload signed artefacts (checksums, SBOM) to the GitHub release
+      id-token: write       # mint Sigstore OIDC tokens for keyless signing
+      attestations: write   # write SLSA / SBOM attestations to the repo's attestation store
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
           persist-credentials: false
-          fetch-depth: 0
-
-        with:
           fetch-depth: 0
 
       # Generate checksums for source files
@@ -199,9 +199,9 @@ jobs:
     needs: [release, compute-subjects]
     if: needs.release.outputs.releases_created == 'true'
     permissions:
-      actions: read
-      id-token: write
-      contents: write
+      actions: read         # required by slsa-github-generator to read this workflow run's metadata
+      id-token: write       # required by slsa-github-generator to mint the SLSA provenance OIDC token
+      contents: write       # required by slsa-github-generator to upload the provenance file to the release
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
     with:
       base64-subjects: ${{ needs.compute-subjects.outputs.hashes }}

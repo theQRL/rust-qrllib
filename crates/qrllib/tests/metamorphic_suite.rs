@@ -132,8 +132,7 @@ fn mldsa87_sign_verify_round_trip_mutate() {
             // Mutated public key → reject.
             let mutated_pk = mutate_array(&pk, mutation);
             assert!(
-                !verify_bytes(&ctx, &message, &signature, &mutated_pk)
-                    .expect("verify mutated pk"),
+                !verify_bytes(&ctx, &message, &signature, &mutated_pk).expect("verify mutated pk"),
                 "verify accepted mutated public key"
             );
         }
@@ -188,8 +187,7 @@ fn mldsa87_from_hex_seed_round_trips() {
     for seed in corpus_seeds() {
         let signer = MlDsa87::from_seed(seed);
         let hex_seed = signer.hex_seed();
-        let round_trip =
-            MlDsa87::from_hex_seed(&hex_seed).expect("round-trip hex seed must parse");
+        let round_trip = MlDsa87::from_hex_seed(&hex_seed).expect("round-trip hex seed must parse");
         assert_eq!(
             signer.public_key_bytes(),
             round_trip.public_key_bytes(),
@@ -200,16 +198,12 @@ fn mldsa87_from_hex_seed_round_trips() {
         let message = b"hex-seed-round-trip-message";
         let signature = round_trip.sign(b"ctx", message).expect("sign via round-trip");
         assert!(
-            verify_bytes(b"ctx", message, &signature, &signer.public_key_bytes())
-                .expect("verify"),
+            verify_bytes(b"ctx", message, &signature, &signer.public_key_bytes()).expect("verify"),
             "signature from round-trip signer did not verify under original pk"
         );
 
         // Hex-seed parser rejects malformed input.
-        assert!(matches!(
-            MlDsa87::from_hex_seed("not-hex"),
-            Err(QrllibError::Hex(_))
-        ));
+        assert!(matches!(MlDsa87::from_hex_seed("not-hex"), Err(QrllibError::Hex(_))));
         assert!(matches!(
             MlDsa87::from_hex_seed("0x00"),
             Err(QrllibError::InvalidMlDsaSeedSize(_, _))
@@ -298,8 +292,7 @@ fn metamorphic_deterministic_signing_changes_on_mauled_message() {
             let base_sig = signer.sign_deterministic(&ctx, &message).expect("base");
 
             let mauled_msg = flip_single_bit(&message, mutation.0);
-            let mauled_sig =
-                signer.sign_deterministic(&ctx, &mauled_msg).expect("sign mauled msg");
+            let mauled_sig = signer.sign_deterministic(&ctx, &mauled_msg).expect("sign mauled msg");
 
             assert_ne!(
                 mauled_sig, base_sig,

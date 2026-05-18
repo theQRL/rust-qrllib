@@ -141,10 +141,7 @@ impl MlDsa87Wallet {
     /// the same signature bytes. **Use only when the deterministic
     /// property is itself a security or protocol requirement.**
     /// (TOB-QRLLIB-6.)
-    pub fn sign_deterministic(
-        &self,
-        message: &[u8],
-    ) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+    pub fn sign_deterministic(&self, message: &[u8]) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
         self.signer.sign_deterministic(&signing_context(self.descriptor), message)
     }
 
