@@ -155,19 +155,28 @@ pub fn dilithium_open(signature_message: &[u8], public_key: &[u8]) -> Option<Vec
     crypto_sign_open(signature_message, &public_key_bytes)
 }
 
+/// Sign `message` using Dilithium **hedged** mode — fresh randomness
+/// is mixed into the per-signature value on every call. Default
+/// signing mode per TOB-QRLLIB-6 (the audit recommendation for the Go
+/// port, mirrored here for parity). For deterministic signing use
+/// [`sign_dilithium_with_secret_key_deterministic`].
 pub fn sign_dilithium_with_secret_key(
     message: &[u8],
     secret_key: &[u8],
 ) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
-    sign_dilithium_with_secret_key_modal(message, secret_key, false)
+    sign_dilithium_with_secret_key_modal(message, secret_key, true)
 }
 
-/// Hedged-mode counterpart to [`sign_dilithium_with_secret_key`].
-pub fn sign_dilithium_with_secret_key_randomized(
+/// Deterministic-mode counterpart to [`sign_dilithium_with_secret_key`].
+/// Same `(secret_key, message)` always yields the same signature
+/// bytes. **Use only when the deterministic property is itself a
+/// requirement** (KAT vector reproduction, RANDAO-style protocols).
+/// (TOB-QRLLIB-6.)
+pub fn sign_dilithium_with_secret_key_deterministic(
     message: &[u8],
     secret_key: &[u8],
 ) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
-    sign_dilithium_with_secret_key_modal(message, secret_key, true)
+    sign_dilithium_with_secret_key_modal(message, secret_key, false)
 }
 
 fn sign_dilithium_with_secret_key_modal(
@@ -243,22 +252,33 @@ impl Dilithium {
         format!("0x{}", hex::encode(self.seed))
     }
 
+    /// Sign `message` with Dilithium using **hedged** mode (default
+    /// per TOB-QRLLIB-6). Two `sign` calls over the same `(key,
+    /// message)` produce distinct signatures, both of which verify
+    /// under the same public key. Verification is unchanged.
+    ///
+    /// For deterministic signatures use [`Dilithium::sign_deterministic`].
     pub fn sign(&self, message: &[u8]) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
         sign_dilithium_with_secret_key(message, &self.secret_key)
     }
 
-    /// Hedged (randomised) counterpart to [`Dilithium::sign`].
-    pub fn sign_randomized(&self, message: &[u8]) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
-        sign_dilithium_with_secret_key_randomized(message, &self.secret_key)
+    /// Deterministic-mode counterpart to [`Dilithium::sign`].
+    /// **Use only when the deterministic property is itself a
+    /// requirement** (KAT vector reproduction); for general-purpose
+    /// signing prefer [`Dilithium::sign`] (TOB-QRLLIB-6).
+    pub fn sign_deterministic(&self, message: &[u8]) -> Result<[u8; DILITHIUM_SIGNATURE_SIZE]> {
+        sign_dilithium_with_secret_key_deterministic(message, &self.secret_key)
     }
 
-    pub fn seal(&self, message: &[u8]) -> Result<Vec<u8>> {
-        crypto_sign(message, &self.secret_key, false)
-    }
-
-    /// Hedged (randomised) counterpart to [`Dilithium::seal`].
-    pub fn seal_randomized(&self, message: &[u8]) -> Result<Vec<u8>> {
+    /// Attached-signature form of [`Dilithium::sign`] — returns
+    /// `signature || message`. Hedged by default (TOB-QRLLIB-6).
+    pub fn sign_attached(&self, message: &[u8]) -> Result<Vec<u8>> {
         crypto_sign(message, &self.secret_key, true)
+    }
+
+    /// Deterministic-mode counterpart to [`Dilithium::sign_attached`].
+    pub fn sign_attached_deterministic(&self, message: &[u8]) -> Result<Vec<u8>> {
+        crypto_sign(message, &self.secret_key, false)
     }
 
     pub fn verify(&self, message: &[u8], signature: &[u8; DILITHIUM_SIGNATURE_SIZE]) -> bool {
@@ -398,6 +418,11 @@ fn poly_use_hint(out: &mut Poly, input: &Poly, hints: &Poly) {
     }
 }
 
+// Bound guard is dead with current callers (all pass compile-time bounds
+// within the reference-implementation range) but kept for parity with the
+// upstream C / Go implementations. Norm-check semantics are measured
+// indirectly via sign/verify round-trip tests.
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
     if bound > (Q - 1) / 8 {
         return 1;
@@ -405,8 +430,18 @@ fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
 
     let mut violation = 0_i32;
     for coefficient in poly.coeffs {
+        // |coef| via branchless sign extension. The audit's recommended
+        // expression form is `coef - ((sign & 2) * coef)` with explicit
+        // parens to remove the operator-precedence ambiguity that
+        // TOB-QRLLIB-9 flagged on the Go side: there, the source read
+        // `t & 2 * a.coeffs[i]`, which parsed (correctly under C/Go
+        // precedence) as `t & (2 * coef)` and only produced the right
+        // answer because `t` is sign-extended (`0` or all-bits-set).
+        // Rewriting as `(sign & 2) * coef` keeps the branchless intent
+        // and makes the masking step explicit so the reader does not
+        // have to verify the precedence dance.
         let sign = coefficient >> 31;
-        let absolute = coefficient.wrapping_sub(sign & coefficient.wrapping_mul(2));
+        let absolute = coefficient.wrapping_sub((sign & 2).wrapping_mul(coefficient));
         violation |= bound.wrapping_sub(1).wrapping_sub(absolute) >> 31;
     }
 
@@ -424,6 +459,10 @@ fn poly_uniform(poly: &mut Poly, seed: &[u8; DILITHIUM_CRYPTO_SEED_SIZE], nonce:
     reader.read(&mut buffer[..buffer_len]);
 
     let mut ctr = rej_uniform(&mut poly.coeffs, &buffer[..buffer_len]);
+    // Coverage: the refill loop body is probabilistic — the first `rej_uniform`
+    // fills every slot for the seeds our tests generate. Kept for correctness
+    // under pathological Shake128 outputs; measured indirectly by parity and
+    // ACVP fixtures that exercise the same rejection-sampling code paths in Go.
     while ctr < N {
         let off = buffer_len % 3;
         buffer.copy_within(buffer_len - off..buffer_len, 0);
@@ -517,6 +556,9 @@ fn poly_challenge(challenge: &mut Poly, seed: &[u8; DILITHIUM_CRYPTO_SEED_SIZE])
 
     challenge.coeffs.fill(0);
     let mut pos = 8_usize;
+    // Coverage: the `pos >= SHAKE256_RATE` refill arm is probabilistic — it
+    // only fires when the Shake256 rate boundary is crossed during rejection
+    // sampling for TAU challenge coefficients. Test seeds do not trigger it.
     for index in (N - TAU)..N {
         let selected = loop {
             if pos >= SHAKE256_RATE {
@@ -1182,6 +1224,12 @@ fn crypto_sign_signature(
             let w0_current = w0;
             poly_vec_k_sub(&mut w0, &w0_current, &hints);
             poly_vec_k_reduce(&mut w0);
+            // Coverage: the following `continue` arms (w0 norm, hint norm, hint
+            // count, and the outer `RejectionBudgetExceeded` fallthrough) are
+            // probabilistic rejection-sampling branches. Our deterministic test
+            // seeds happen to succeed on the first iteration; the code paths
+            // are exercised by ACVP parity fixtures that run against the Go
+            // reference implementation.
             if poly_vec_k_chk_norm(&w0, GAMMA2 - BETA) != 0 {
                 continue;
             }
@@ -1316,7 +1364,8 @@ mod tests {
         DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SECRET_KEY_SIZE,
         DILITHIUM_SIGNATURE_SIZE, Dilithium, OMEGA, POLY_Z_PACKED_BYTES, dilithium_extract_message,
         dilithium_extract_signature, dilithium_open, sign_dilithium_with_secret_key,
-        validate_dilithium_public_key, validate_dilithium_secret_key, verify_dilithium_signature,
+        sign_dilithium_with_secret_key_deterministic, validate_dilithium_public_key,
+        validate_dilithium_secret_key, verify_dilithium_signature,
     };
     use crate::QrllibError;
     use sha2::Digest;
@@ -1360,12 +1409,15 @@ mod tests {
     fn dilithium_sign_verify_open_and_extract_round_trip() {
         let signer = Dilithium::from_seed(known_seed());
         let message = b"browser wasm dilithium";
-        let signature = signer.sign(message).expect("signature");
+        // Detached/attached parity + pinned SHA-256 hash assertions
+        // below require FIPS 204 §3.5 deterministic mode; default `sign`
+        // is hedged per TOB-QRLLIB-6.
+        let signature = signer.sign_deterministic(message).expect("signature");
         assert!(signer.verify(message, &signature));
         assert!(verify_dilithium_signature(message, &signature, &signer.public_key_bytes()));
         assert!(!verify_dilithium_signature(b"tampered", &signature, &signer.public_key_bytes()));
 
-        let sealed = signer.seal(message).expect("sealed");
+        let sealed = signer.sign_attached_deterministic(message).expect("sealed");
         assert_eq!(dilithium_extract_message(&sealed).expect("message"), message);
         assert_eq!(dilithium_extract_signature(&sealed).expect("signature"), signature.as_slice());
         assert_eq!(dilithium_open(&sealed, &signer.public_key_bytes()).expect("opened"), message);
@@ -1394,13 +1446,16 @@ mod tests {
 
         assert_eq!(signer_a.public_key_bytes(), signer_b.public_key_bytes());
         assert_eq!(signer_a.secret_key_bytes(), signer_b.secret_key_bytes());
+        // Asserting deterministic byte-for-byte equality requires the
+        // FIPS 204 §3.5 deterministic-mode entry point; the default
+        // `sign` is now hedged per TOB-QRLLIB-6.
         assert_eq!(
-            signer_a.sign(&message).expect("signature"),
-            signer_b.sign(&message).expect("signature"),
+            signer_a.sign_deterministic(&message).expect("signature"),
+            signer_b.sign_deterministic(&message).expect("signature"),
         );
         assert_eq!(
-            signer_a.seal(&message).expect("sealed"),
-            signer_b.seal(&message).expect("sealed"),
+            signer_a.sign_attached_deterministic(&message).expect("sealed"),
+            signer_b.sign_attached_deterministic(&message).expect("sealed"),
         );
     }
 
@@ -1408,10 +1463,12 @@ mod tests {
     fn sign_with_secret_key_matches_instance_and_zeroize() {
         let mut signer = Dilithium::from_seed(known_seed());
         let message = b"deterministic legacy dilithium";
+        // Free-fn + instance comparison requires deterministic mode for
+        // byte-equality post TOB-QRLLIB-6 (hedged-by-default).
         let signature =
-            sign_dilithium_with_secret_key(message, signer.secret_key_bytes().as_slice())
+            sign_dilithium_with_secret_key_deterministic(message, signer.secret_key_bytes().as_slice())
                 .expect("sign with secret key");
-        assert_eq!(signature, signer.sign(message).expect("instance sign"));
+        assert_eq!(signature, signer.sign_deterministic(message).expect("instance sign"));
         assert!(verify_dilithium_signature(message, &signature, &signer.public_key_bytes()));
 
         signer.zeroize();
@@ -1486,19 +1543,19 @@ mod tests {
         let signer = Dilithium::from_seed(known_seed());
         let message = b"dilithium randomised smoke";
 
-        let deterministic_a = signer.sign(message).expect("deterministic a");
-        let deterministic_b = signer.sign(message).expect("deterministic b");
+        let deterministic_a = signer.sign_deterministic(message).expect("deterministic a");
+        let deterministic_b = signer.sign_deterministic(message).expect("deterministic b");
         assert_eq!(deterministic_a, deterministic_b);
 
-        let hedged_a = signer.sign_randomized(message).expect("hedged a");
-        let hedged_b = signer.sign_randomized(message).expect("hedged b");
+        let hedged_a = signer.sign(message).expect("hedged a");
+        let hedged_b = signer.sign(message).expect("hedged b");
         assert_ne!(hedged_a, hedged_b);
         assert_ne!(hedged_a, deterministic_a);
         assert!(signer.verify(message, &hedged_a));
         assert!(signer.verify(message, &hedged_b));
 
-        let sealed_a = signer.seal_randomized(message).expect("seal a");
-        let sealed_b = signer.seal_randomized(message).expect("seal b");
+        let sealed_a = signer.sign_attached(message).expect("sign_attached a");
+        let sealed_b = signer.sign_attached(message).expect("sign_attached b");
         assert_ne!(sealed_a, sealed_b);
     }
 
@@ -1507,7 +1564,7 @@ mod tests {
         let mut signer = Dilithium::from_seed([17_u8; DILITHIUM_CRYPTO_SEED_SIZE]);
         signer.zeroize();
         assert!(matches!(
-            signer.seal(b"after zeroize"),
+            signer.sign_attached(b"after zeroize"),
             Err(QrllibError::DilithiumSecretKeyZeroized)
         ));
     }

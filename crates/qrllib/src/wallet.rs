@@ -6,12 +6,30 @@ use crate::{
     mldsa::{ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87, verify_bytes},
     mnemonic::{bin_to_mnemonic, mnemonic_to_bin},
     seed::{ExtendedSeed, Seed},
+    signing_context::signing_context,
     wallet_type::WalletType,
 };
 use zeroize::Zeroizing;
 
-pub const ML_DSA_87_CONTEXT: &[u8] = b"ZOND";
-
+/// QRL V2.0 ML-DSA-87 wallet.
+///
+/// Wraps the low-level [`MlDsa87`] signer with QRL-specific address
+/// derivation and a domain-separated **signing context** that
+/// cryptographically binds every signature to the wallet's descriptor
+/// (and, by extension, to the address derived from it). The context is
+/// constructed via [`signing_context`] as
+/// `"ZOND" || SIGNING_CONTEXT_VERSION || descriptor` (fixed 8 bytes);
+/// a signature produced under descriptor `D1` will not verify under any
+/// other descriptor `D2`, so the wallet type / metadata cannot be
+/// silently re-labelled after the fact. (TOB-QRLLIB-3 framing.)
+///
+/// Callers do not supply the context themselves —
+/// [`MlDsa87Wallet::sign`] computes it from the wallet's own
+/// descriptor, and [`verify_mldsa87_wallet_signature`] computes it
+/// from the `descriptor` argument it receives. Direct use of the
+/// low-level [`MlDsa87`] signer skips this binding; that is correct
+/// behaviour for application-supplied contexts but means the caller
+/// owns context discipline themselves.
 #[derive(Clone, Debug)]
 pub struct MlDsa87Wallet {
     descriptor: Descriptor,
@@ -29,7 +47,7 @@ pub fn verify_mldsa87_wallet_signature(
         return false;
     }
 
-    verify_bytes(ML_DSA_87_CONTEXT, message, signature, public_key).unwrap_or(false)
+    verify_bytes(&signing_context(descriptor), message, signature, public_key).unwrap_or(false)
 }
 
 impl MlDsa87Wallet {
@@ -104,15 +122,30 @@ impl MlDsa87Wallet {
         format_address(&self.address())
     }
 
+    /// Produce an ML-DSA-87 signature over `message` using the
+    /// descriptor-bound signing context. Hedged by default per
+    /// FIPS 204 §3.4 (TOB-QRLLIB-6): each call mixes fresh
+    /// `crypto/rand` randomness into the per-signature value, so two
+    /// signs over the same message produce distinct signatures, both
+    /// of which verify under the same public key and descriptor.
+    ///
+    /// For protocols that require deterministic signatures (e.g.
+    /// RANDAO-style verifiable beacon contributions) use
+    /// [`MlDsa87Wallet::sign_deterministic`].
     pub fn sign(&self, message: &[u8]) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
-        self.signer.sign(ML_DSA_87_CONTEXT, message)
+        self.signer.sign(&signing_context(self.descriptor), message)
     }
 
-    /// Hedged (randomised) counterpart to [`MlDsa87Wallet::sign`]. Uses fresh
-    /// system randomness on every call; recommended for signers exposed to
-    /// fault-injection models.
-    pub fn sign_randomized(&self, message: &[u8]) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
-        self.signer.sign_randomized(ML_DSA_87_CONTEXT, message)
+    /// FIPS 204 §3.5 deterministic-mode counterpart to
+    /// [`MlDsa87Wallet::sign`]. Same `(wallet, message)` always yields
+    /// the same signature bytes. **Use only when the deterministic
+    /// property is itself a security or protocol requirement.**
+    /// (TOB-QRLLIB-6.)
+    pub fn sign_deterministic(
+        &self,
+        message: &[u8],
+    ) -> Result<[u8; ML_DSA_87_SIGNATURE_SIZE]> {
+        self.signer.sign_deterministic(&signing_context(self.descriptor), message)
     }
 
     pub fn zeroize(&mut self) {

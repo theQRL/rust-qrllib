@@ -103,7 +103,14 @@ fn addr_to_bytes(addr: &[u32; 8]) -> [u8; 32] {
 fn bytes_to_addr(bytes: &[u8]) -> [u32; 8] {
     let mut addr = [0_u32; 8];
     for (index, chunk) in bytes.chunks_exact(4).take(8).enumerate() {
-        addr[index] = u32::from_be_bytes(chunk.try_into().expect("address chunk"));
+        // Invariant tripwire: `chunks_exact(4)` yields slices of exactly
+        // 4 bytes (any tail shorter than 4 is discarded), so the
+        // `&[u8] -> [u8; 4]` conversion below cannot fail at runtime.
+        // The expect is the documented panic-policy "invariant violation"
+        // shape — a tripwire against any future refactor that swaps the
+        // chunk source for one with a different length guarantee. See
+        // `SECURITY.md` "Audit-derived design choices" for the policy.
+        addr[index] = u32::from_be_bytes(chunk.try_into().expect("chunks_exact(4) guarantees 4-byte chunks"));
     }
     addr
 }
@@ -722,6 +729,9 @@ fn crypto_sign_signature(
     if let Some(optrand) = optrand_override {
         opt_rand.copy_from_slice(optrand);
     } else if let Err(error) = fill_random_optrand(&mut opt_rand) {
+        // Coverage: the RNG-failure arm is unreachable in tests — `getrandom`
+        // only errors on OS-level RNG exhaustion. Kept so that catastrophic
+        // RNG failures zeroize the secret-key material before propagating.
         ctx.sk_seed.zeroize();
         opt_rand.zeroize();
         return Err(error);
@@ -948,7 +958,7 @@ impl SphincsPlus256s {
         format!("0x{}", hex::encode(self.seed))
     }
 
-    pub fn seal(&self, message: &[u8]) -> Result<Vec<u8>> {
+    pub fn sign_attached(&self, message: &[u8]) -> Result<Vec<u8>> {
         crypto_sign(message, &self.sk)
     }
 
@@ -1123,7 +1133,7 @@ mod tests {
             Err(QrllibError::SphincsPlusSecretKeyZeroized)
         ));
         assert!(matches!(
-            signer.seal(b"after zeroize"),
+            signer.sign_attached(b"after zeroize"),
             Err(QrllibError::SphincsPlusSecretKeyZeroized)
         ));
     }

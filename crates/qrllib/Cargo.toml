@@ -21,5 +21,22 @@ serde_json.workspace = true
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { workspace = true, features = ["js"] }
 
+[features]
+# Opt-in to issuing new SPHINCS+/SLH-DSA wallets (TOB-QRLLIB-4).
+#
+# The QRL wallet layer treats SPHINCS+ as **non-issuable by default**:
+# the implementation here is the pre-FIPS-205 SPHINCS+ submission, QRL
+# has not yet committed to a specific SLH-DSA parameter set under
+# FIPS 205, and activating the wallet path now would commit users to a
+# parameter set that may change. `WalletType::SphincsPlus256s.is_issuable()`
+# therefore returns `false` unless this feature is enabled. Verification
+# (and use of the raw `SphincsPlus256s` primitive directly, outside the
+# wallet layer) remains unrestricted; only the wallet-creation entry
+# points are gated.
+#
+# In-crate tests get the issuable behaviour automatically via
+# `cfg(any(test, feature = "experimental-sphincsplus-issuance"))`.
+experimental-sphincsplus-issuance = []
+
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }

@@ -2,7 +2,7 @@ use std::{env, fs, path::PathBuf};
 
 use qrllib::{
     ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    mldsa::sign_with_secret_key,
+    mldsa::sign_with_secret_key_deterministic,
 };
 use serde::Deserialize;
 
@@ -89,7 +89,12 @@ fn acvp_siggen_matches_nist_vectors() {
 
         let mut secret_key_bytes = [0_u8; ML_DSA_87_SECRET_KEY_SIZE];
         secret_key_bytes.copy_from_slice(&secret_key);
-        let signature = sign_with_secret_key(&context, &message, &secret_key_bytes)
+        // ACVP siggen vectors are pinned to FIPS 204 §3.5 deterministic
+        // mode (`rnd = 32 zero bytes`). The public `sign` API is hedged
+        // by default per TOB-QRLLIB-6, so route through the explicit
+        // `sign_with_secret_key_deterministic` entry point to reproduce
+        // the vectors byte-for-byte.
+        let signature = sign_with_secret_key_deterministic(&context, &message, &secret_key_bytes)
             .expect("ACVP signature generation should succeed");
 
         assert_eq!(signature.len(), ML_DSA_87_SIGNATURE_SIZE);

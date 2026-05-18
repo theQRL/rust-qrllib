@@ -22,6 +22,47 @@ impl WalletType {
             Self::MlDsa87 => ML_DSA_87_PUBLIC_KEY_SIZE,
         }
     }
+
+    /// Whether the QRL wallet layer will currently issue *new* wallets
+    /// of this type. (TOB-QRLLIB-4.)
+    ///
+    /// - [`Self::MlDsa87`] — always `true`. ML-DSA-87 is the primary
+    ///   recommended QRL v2 algorithm (FIPS 204).
+    /// - [`Self::SphincsPlus256s`] — `true` only when the
+    ///   `experimental-sphincsplus-issuance` Cargo feature is enabled
+    ///   (or in in-crate tests). The implementation here is the
+    ///   pre-FIPS-205 SPHINCS+ submission, QRL has not yet committed
+    ///   to a specific SLH-DSA parameter set under FIPS 205, and
+    ///   activating the wallet path now would commit users to a
+    ///   parameter set that may change. The wallet type is reserved
+    ///   in the descriptor format so existing addresses keep working
+    ///   (see [`is_verifiable`]).
+    ///
+    /// [`is_verifiable`]: Self::is_verifiable
+    pub const fn is_issuable(self) -> bool {
+        match self {
+            Self::MlDsa87 => true,
+            Self::SphincsPlus256s => {
+                cfg!(any(test, feature = "experimental-sphincsplus-issuance"))
+            }
+        }
+    }
+
+    /// Whether the QRL wallet layer will currently *verify* signatures
+    /// for this wallet type. (TOB-QRLLIB-4.)
+    ///
+    /// Always `true` for both [`Self::MlDsa87`] and
+    /// [`Self::SphincsPlus256s`] — existing addresses must continue to
+    /// be verifiable regardless of the issuance gate. The pair
+    /// (`is_issuable`, `is_verifiable`) lets a wallet type be
+    /// "verify-only" (existing addresses keep working but new wallets
+    /// cannot be created), which is the current SPHINCS+/SLH-DSA
+    /// posture.
+    pub const fn is_verifiable(self) -> bool {
+        match self {
+            Self::MlDsa87 | Self::SphincsPlus256s => true,
+        }
+    }
 }
 
 impl TryFrom<u8> for WalletType {

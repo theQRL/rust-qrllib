@@ -14,8 +14,8 @@ Supported algorithms:
 |-----------|------|----------|----------|
 | ML-DSA-87 | Lattice-based | FIPS 204 | Primary stateless signature scheme |
 | Dilithium | Lattice-based | Pre-FIPS | Legacy compatibility |
-| SPHINCS+-256s robust | Hash-based | SPHINCS+ pre-FIPS | Conservative stateless signatures |
-| XMSS | Hash-based | RFC 8391 | Legacy QRL address compatibility |
+| SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path gated pending QRL's SLH-DSA parameter-set choice |
+| XMSS | Hash-based | Pre-standardisation; see XMSS notes | QRL v1 → v2 migration |
 
 ## Workspace
 
@@ -61,6 +61,8 @@ Wallet APIs include QRL descriptors, address derivation, seeds, extended seeds, 
 | `verify_sphincsplus_wallet_signature` | Verify SPHINCS+ wallet signatures with descriptor binding |
 | `verify_legacy_xmss` | Verify legacy XMSS signatures |
 
+Wallet-level `sign` / `verify_*` bind every signature to its descriptor via a fixed 8-byte domain-separated context: `"ZOND" || SIGNING_CONTEXT_VERSION || descriptor`. ML-DSA-87 passes it as the FIPS 204 ctx parameter; SPHINCS+-256s prepends it to the message. Callers do not need to construct the context themselves — wallet helpers do it internally — but `qrllib::signing_context(descriptor)` is exposed for parity with go-qrllib. Bumping `SIGNING_CONTEXT_VERSION` is a hard break of the signature wire format.
+
 Common wallet construction/restoration methods:
 
 | Type | Constructors |
@@ -73,8 +75,8 @@ Common wallet accessors:
 
 | Type | Accessors |
 |------|-----------|
-| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `sign_randomized`, `zeroize` |
-| `SphincsPlus256sWallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `seal`, `zeroize` |
+| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign` (hedged), `sign_deterministic`, `zeroize` |
+| `SphincsPlus256sWallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `sign_attached`, `zeroize` |
 | `LegacyXmssWallet` | `height`, `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `root`, `public_key`, `secret_key`, `address`, `index`, `set_index`, `sign`, `descriptor`, `zeroize` |
 
 Accessors that return secret material (`seed`, `secret_key`, `secret_key_bytes`) hand back `zeroize::Zeroizing<T>` values that clear on drop. They dereference transparently to the underlying byte array or `Vec<u8>`, so passing them to `hex::encode`, `Sha256::digest`, `.iter()`, or the verify helpers works unchanged. Explicit `.zeroize()` remains available, and every secret-bearing wallet and signer type now also implements `Drop` that zeroizes on scope exit — forgetting to call `.zeroize()` no longer leaves residual secrets in memory.
@@ -158,9 +160,9 @@ Common low-level methods:
 
 | Type | Constructors and accessors |
 |------|---------------------------|
-| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_randomized`, `seal`, `seal_randomized`, `verify`, `zeroize` |
-| `SphincsPlus256s` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `seal`, `zeroize` |
-| `Dilithium` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_randomized`, `seal`, `seal_randomized`, `verify`, `zeroize` |
+| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
+| `SphincsPlus256s` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_attached`, `zeroize` |
+| `Dilithium` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
 | `Xmss` | `initialize_tree`, `seed`, `secret_key`, `public_seed`, `root`, `public_key`, `hash_function`, `height`, `index`, `set_index`, `sign`, `zeroize` |
 
 Low-level verification and sealed-message helpers:
@@ -168,14 +170,14 @@ Low-level verification and sealed-message helpers:
 | API | Purpose |
 |-----|---------|
 | `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context |
-| `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (deterministic) |
-| `sign_mldsa_with_secret_key_randomized` | Hedged-mode counterpart — fresh 32-byte system randomness per call (FIPS 204 §3.7) |
-| `open`, `extract_message`, `extract_signature` | ML-DSA-87 sealed-message helpers |
+| `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (hedged by default per FIPS 204 §3.4 — TOB-QRLLIB-6) |
+| `sign_mldsa_with_secret_key_deterministic` | FIPS 204 §3.5 deterministic-mode opt-in (use for RANDAO-style protocols and KAT vector reproduction) |
+| `open`, `extract_message`, `extract_signature` | ML-DSA-87 attached-signature helpers |
 | `verify_sphincsplus_signature` | Verify detached SPHINCS+ signatures |
-| `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ sealed-message helpers |
+| `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ attached-signature helpers |
 | `verify_dilithium_signature` | Verify detached legacy Dilithium signatures |
-| `sign_dilithium_with_secret_key` | Stateless legacy Dilithium secret-key signing (deterministic) |
-| `sign_dilithium_with_secret_key_randomized` | Hedged-mode counterpart |
+| `sign_dilithium_with_secret_key` | Stateless legacy Dilithium secret-key signing (hedged by default) |
+| `sign_dilithium_with_secret_key_deterministic` | Deterministic-mode opt-in (KAT vector reproduction) |
 | `dilithium_open`, `dilithium_extract_message`, `dilithium_extract_signature` | Dilithium sealed-message helpers |
 | `verify_xmss`, `verify_xmss_with_custom_wots_param_w` | Verify lower-level XMSS signatures |
 
@@ -192,16 +194,27 @@ Low-level verification and sealed-message helpers:
 | `format_address`, `get_address`, `is_valid_address` | Modern QRL address helpers |
 | `get_xmss_address_from_pk`, `is_valid_xmss_address` | Legacy XMSS address helpers |
 | `bin_to_mnemonic`, `mnemonic_to_bin` | QRL wordlist conversion helpers |
+| `signing_context`, `SIGNING_CONTEXT_VERSION`, `SIGNING_CONTEXT_PREFIX`, `SIGNING_CONTEXT_SIZE` | Domain-separated signing-context helpers used by wallet-level sign/verify |
 | `QrllibError`, `Result` | Shared error and result types |
 
-### Deterministic vs Hedged Signing
+### Hedged vs Deterministic Signing
 
-ML-DSA-87 and Dilithium expose both signing modes per FIPS 204 §3.7:
+ML-DSA-87 and Dilithium are **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode and the TOB-QRLLIB-6 default (TOB-6 audit recommendation applied here for parity with `go-qrllib`):
 
-- **`sign` / `seal`** use deterministic nonce derivation (`rnd = 0` plumbed through the FIPS 204 nonce construction). Two calls with the same seed and message produce byte-identical signatures. This is the mode the project's ACVP and cross-verification test vectors are pinned to.
-- **`sign_randomized` / `seal_randomized`** draw fresh system randomness on every call, producing a different signature each time. FIPS 204 recommends this mode on signers exposed to fault-injection attacks (hardware wallets, untrusted execution environments). Verification is identical — a hedged signature verifies under the same public key as a deterministic one.
+- **`sign` / `sign_attached`** (default) draw fresh `crypto/rand` randomness into the per-signature value on every call. Two signs of the same `(secret_key, [context,] message)` produce **distinct** signature bytes; both verify under the same public key. This frustrates fault-injection attacks against deterministic signing — an adversary who could differentiate two same-message signatures and recover `s1`/`s2` by lattice differential analysis no longer can. Verification is unchanged and existing verifiers are unaffected.
+- **`sign_deterministic` / `sign_attached_deterministic`** (FIPS 204 §3.5 opt-in) use a fixed all-zero per-signature value, so two signs of the same input yield byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT / cross-verification test-vector reproduction.
 
-SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; no explicit `_randomized` method is needed.
+SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; no explicit deterministic counterpart is needed.
+
+### Algorithm Selection Guide
+
+| Requirement | Recommended |
+|-------------|-------------|
+| General-purpose stateless signing, best performance | `MlDsa87` (hedged by default) |
+| QRL V2.0 wallet transactions | `MlDsa87Wallet` (descriptor-bound signing context) |
+| Deterministic signatures (e.g. RANDAO-style beacon contributions) | `MlDsa87::sign_deterministic` (FIPS 204 §3.5 opt-in) |
+| Maximum security, don't trust lattice assumptions | `SphincsPlus256s` raw primitive (wallet path gated, see SPHINCS+ notes) |
+| Legacy QRL v1 address compatibility | `LegacyXmssWallet` (with extreme care; see XMSS notes) |
 
 ### Safe XMSS Usage
 
@@ -211,6 +224,14 @@ XMSS is a **stateful** scheme. Signing two different messages under the same OTS
 2. Everything else — index persistence, backup-and-restore reconciliation, single-writer discipline across processes or threads, and key rotation before tree exhaustion — is the **application's responsibility**. See [SECURITY.md](SECURITY.md) for the full threat model and operational checklist.
 
 If you serialise the secret-key bytes via `wallet.secret_key()` and re-instantiate later, you must make absolutely sure the new instance starts at an OTS index greater than or equal to the highest used index. The library cannot enforce this across process or device boundaries.
+
+### XMSS notes
+
+This library's XMSS implementation **predates RFC 8391** (the spec was published in August 2018, after QRL v1 launched) and is retained as a v1 → v2 **migration vehicle** — it is not intended as a general standards-tracking XMSS implementation. Where parameter-set choices happen to overlap with RFC 8391 (XMSS-SHA2_10_256 and XMSS-SHAKE_256_10_256), signatures produced by `rust-qrllib` verify under the RFC 8391 reference implementation (see `.github/workflows/cross-verify.yml`). The library does **not** track later standards updates such as NIST SP 800-208 (October 2020), which refined `expand_seed` to take additional inputs — adopting that refinement would change the keypair derived from any given v1 seed and break compatibility with existing v1 mainnet addresses. **`Shake128`** is a pre-standardisation QRL-specific hash variant, retained for v1 mainnet address compatibility only, and is not part of RFC 8391 or SP 800-208. For new wallets, use **`MlDsa87Wallet`** (FIPS 204). See [SECURITY.md](SECURITY.md) for the full provenance discussion.
+
+### SPHINCS+ notes
+
+The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is reserved in the descriptor format so existing addresses keep working (`is_verifiable()` always returns `true`). Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need to construct SPHINCS+ wallets locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`). For new wallets, use **`MlDsa87Wallet`**.
 
 ### Keeping Secrets in Memory for the Minimum Time
 

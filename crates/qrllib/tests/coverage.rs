@@ -107,14 +107,14 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
     let signature = generated.sign(b"context", message).expect("signature");
     assert_eq!(signature.len(), ML_DSA_87_SIGNATURE_SIZE);
     assert_eq!(
-        extract_message(&generated.seal(b"context", message).expect("sealed")).expect("message"),
+        extract_message(&generated.sign_attached(b"context", message).expect("sealed")).expect("message"),
         message
     );
     assert_eq!(extract_signature(&signature).expect("signature slice"), signature);
     assert!(extract_signature(&signature[..signature.len() - 1]).is_none());
     assert_eq!(extract_message(&signature).expect("empty message"), b"");
 
-    let sealed = imported.seal(b"context", message).expect("sealed message");
+    let sealed = imported.sign_attached(b"context", message).expect("sealed message");
     let opened =
         open(b"context", &sealed, &imported.public_key_bytes()).expect("open").expect("opened");
     assert_eq!(opened, message);
@@ -164,14 +164,14 @@ fn dilithium_public_api_covers_generation_import_export_and_zeroization() {
     let signature = generated.sign(message).expect("signature");
     assert_eq!(signature.len(), DILITHIUM_SIGNATURE_SIZE);
     assert_eq!(
-        dilithium_extract_message(&generated.seal(message).expect("sealed")).expect("message"),
+        dilithium_extract_message(&generated.sign_attached(message).expect("sealed")).expect("message"),
         message
     );
     assert_eq!(dilithium_extract_signature(&signature).expect("signature slice"), signature);
     assert!(dilithium_extract_signature(&signature[..signature.len() - 1]).is_none());
     assert_eq!(dilithium_extract_message(&signature).expect("empty message"), b"");
 
-    let sealed = imported.seal(message).expect("sealed message");
+    let sealed = imported.sign_attached(message).expect("sealed message");
     let opened = dilithium_open(&sealed, &imported.public_key_bytes()).expect("opened");
     assert_eq!(opened, message);
     assert!(dilithium_open(&[1_u8; 4], &imported.public_key_bytes()).is_none());

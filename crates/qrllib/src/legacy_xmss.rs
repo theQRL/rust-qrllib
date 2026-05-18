@@ -146,6 +146,10 @@ pub fn get_xmss_address_from_pk(
     extended_public_key: [u8; LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE],
 ) -> Result<[u8; LEGACY_XMSS_ADDRESS_SIZE]> {
     let descriptor = QrlDescriptor::from_extended_public_key(&extended_public_key)?;
+    // Coverage: unreachable today because `LegacyAddrFormatType` has a single
+    // variant (`Sha2562x`); `TryFrom<u8>` already rejects any other byte at
+    // parse time. Kept as a forward-compatibility checkpoint so that adding a
+    // new variant forces explicit handling here.
     if descriptor.addr_format_type() != LegacyAddrFormatType::Sha2562x {
         return Err(QrllibError::UnsupportedLegacyAddressFormat(
             descriptor.addr_format_type() as u8
@@ -169,6 +173,7 @@ pub fn is_valid_xmss_address(address: [u8; LEGACY_XMSS_ADDRESS_SIZE]) -> bool {
     let Ok(descriptor) = QrlDescriptor::from_bytes(&address[..LEGACY_XMSS_DESCRIPTOR_SIZE]) else {
         return false;
     };
+    // Coverage: see `get_xmss_address_from_pk` — single-variant forward-compat guard.
     if descriptor.addr_format_type() != LegacyAddrFormatType::Sha2562x {
         return false;
     }
@@ -184,6 +189,10 @@ impl LegacyXmssWallet {
         hash_function: XmssHashFunction,
         addr_format_type: LegacyAddrFormatType,
     ) -> Result<Self> {
+        // Coverage: unreachable today because every `XmssHeight` constructor
+        // (`new`, `from_u32`, `from_descriptor_byte`) already enforces
+        // `value <= XMSS_MAX_HEIGHT`. Kept as a defence-in-depth guard against
+        // a future constructor that might skip the check.
         if height.as_u8() > XMSS_MAX_HEIGHT {
             return Err(QrllibError::InvalidXmssHeight(height.as_u8()));
         }
@@ -300,6 +309,9 @@ pub fn verify_legacy_xmss(
     let Ok(descriptor) = QrlDescriptor::from_extended_public_key(&extended_public_key) else {
         return false;
     };
+    // Coverage: unreachable today because `LegacyWalletType` has a single
+    // variant (`Xmss`); `TryFrom<u8>` already rejects any other byte at parse
+    // time. Kept as a forward-compatibility checkpoint.
     if descriptor.signature_type() != LegacyWalletType::Xmss {
         return false;
     }

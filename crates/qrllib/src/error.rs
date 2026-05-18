@@ -103,6 +103,16 @@ pub enum QrllibError {
 
     #[error("unsupported legacy XMSS address format: {0}")]
     UnsupportedLegacyAddressFormat(u8),
+
+    #[error(
+        "{0} wallet creation is gated; enable the `experimental-sphincsplus-issuance` Cargo feature to opt in. See SECURITY.md and `WalletType::is_issuable`."
+    )]
+    WalletTypeNotIssuable(WalletType),
+
+    #[error(
+        "unsupported XMSS parameter set OID 0x{0:08x}; only XMSS-SHA2_{{10,16,20}}_256 (0x01..0x03) and XMSS-SHAKE_{{10,16,20}}_256 (0x07..0x09) are accepted by the rfc8391 interop module"
+    )]
+    UnsupportedXmssParameterSet(u32),
 }
 
 pub type Result<T> = core::result::Result<T, QrllibError>;

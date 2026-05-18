@@ -5,6 +5,7 @@ use crate::{
     error::{QrllibError, Result},
     mnemonic::{bin_to_mnemonic, mnemonic_to_bin},
     seed::{ExtendedSeed, Seed},
+    signing_context::{SIGNING_CONTEXT_SIZE, signing_context},
     sphincsplus::{
         SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
         SPHINCS_PLUS_256S_SECRET_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s,
@@ -14,11 +15,40 @@ use crate::{
 };
 use zeroize::Zeroizing;
 
+/// QRL V2.0 SPHINCS+-256s wallet.
+///
+/// Wraps the low-level [`SphincsPlus256s`] signer with QRL-specific
+/// address derivation and a domain-separated **signing context**.
+/// SPHINCS+ has no native context parameter, so the wallet prepends
+/// the fixed-length [`signing_context`] bytes to the message before
+/// signing — the resulting signature commits cryptographically to the
+/// wallet's descriptor (and therefore to the address derived from it),
+/// preventing a signature produced under descriptor `D1` from being
+/// re-purposed as if it had been issued under any other descriptor
+/// `D2`. (TOB-QRLLIB-3 framing.)
+///
+/// Callers do not supply the context themselves —
+/// [`SphincsPlus256sWallet::sign`] prepends it from the wallet's own
+/// descriptor, and [`verify_sphincsplus_wallet_signature`] prepends it
+/// from the `descriptor` argument it receives.
 #[derive(Clone, Debug)]
 pub struct SphincsPlus256sWallet {
     descriptor: Descriptor,
     signer: SphincsPlus256s,
     seed: Seed,
+}
+
+/// Prepend the fixed-length signing context to the message so SPHINCS+
+/// (which has no native ctx parameter) still commits to the descriptor in
+/// its signed bytes. The prefix is compile-time constant length, so the
+/// concatenation is canonically parseable and cannot collide with a
+/// shifted-boundary forgery.
+fn domain_separated_message(descriptor: Descriptor, message: &[u8]) -> Vec<u8> {
+    let ctx = signing_context(descriptor);
+    let mut out = Vec::with_capacity(SIGNING_CONTEXT_SIZE + message.len());
+    out.extend_from_slice(&ctx);
+    out.extend_from_slice(message);
+    out
 }
 
 pub fn verify_sphincsplus_wallet_signature(
@@ -33,16 +63,37 @@ pub fn verify_sphincsplus_wallet_signature(
         return false;
     }
 
-    verify_sphincsplus_signature(message, signature, public_key)
+    let domain_separated = domain_separated_message(descriptor, message);
+    verify_sphincsplus_signature(&domain_separated, signature, public_key)
 }
 
 impl SphincsPlus256sWallet {
+    /// Issuance-gate check shared by every wallet constructor.
+    ///
+    /// Returns `Err(QrllibError::WalletTypeNotIssuable(...))` when
+    /// [`WalletType::SphincsPlus256s.is_issuable()`] is `false` —
+    /// i.e. when the `experimental-sphincsplus-issuance` Cargo feature
+    /// is not enabled and we are not in an in-crate test build.
+    /// (TOB-QRLLIB-4.)
+    ///
+    /// Verification helpers and the raw [`SphincsPlus256s`] primitive
+    /// remain unrestricted; this gate applies only to *new wallet
+    /// creation* at the wallet layer.
+    fn assert_issuable() -> Result<()> {
+        if !WalletType::SphincsPlus256s.is_issuable() {
+            return Err(QrllibError::WalletTypeNotIssuable(WalletType::SphincsPlus256s));
+        }
+        Ok(())
+    }
+
     pub fn generate() -> Result<Self> {
+        Self::assert_issuable()?;
         let seed = Seed::generate()?;
         Self::from_seed(seed)
     }
 
     pub fn from_seed(seed: Seed) -> Result<Self> {
+        Self::assert_issuable()?;
         let descriptor = Descriptor::sphincsplus256s();
         let derived_seed = seed.shake256(SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE);
         let mut core_seed = [0_u8; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE];
@@ -52,11 +103,13 @@ impl SphincsPlus256sWallet {
     }
 
     pub fn from_hex_seed(value: &str) -> Result<Self> {
+        Self::assert_issuable()?;
         let seed = Seed::from_hex(value)?;
         Self::from_seed(seed)
     }
 
     pub fn from_extended_seed(extended_seed: ExtendedSeed) -> Result<Self> {
+        Self::assert_issuable()?;
         let descriptor = extended_seed.descriptor();
         if descriptor.wallet_type()? != WalletType::SphincsPlus256s {
             return Err(QrllibError::InvalidDescriptor);
@@ -65,11 +118,13 @@ impl SphincsPlus256sWallet {
     }
 
     pub fn from_hex_extended_seed(value: &str) -> Result<Self> {
+        Self::assert_issuable()?;
         let extended_seed = ExtendedSeed::from_hex(value)?;
         Self::from_extended_seed(extended_seed)
     }
 
     pub fn from_mnemonic(value: &str) -> Result<Self> {
+        Self::assert_issuable()?;
         let bytes = mnemonic_to_bin(value)?;
         let extended_seed = ExtendedSeed::from_bytes(&bytes)?;
         Self::from_extended_seed(extended_seed)
@@ -112,11 +167,11 @@ impl SphincsPlus256sWallet {
     }
 
     pub fn sign(&self, message: &[u8]) -> Result<[u8; SPHINCS_PLUS_256S_SIGNATURE_SIZE]> {
-        self.signer.sign(message)
+        self.signer.sign(&domain_separated_message(self.descriptor, message))
     }
 
-    pub fn seal(&self, message: &[u8]) -> Result<Vec<u8>> {
-        self.signer.seal(message)
+    pub fn sign_attached(&self, message: &[u8]) -> Result<Vec<u8>> {
+        self.signer.sign_attached(&domain_separated_message(self.descriptor, message))
     }
 
     pub fn zeroize(&mut self) {
@@ -137,6 +192,7 @@ mod tests {
     use crate::{
         address::is_valid_address,
         seed::{ExtendedSeed, Seed},
+        signing_context::signing_context,
         sphincsplus::{
             SPHINCS_PLUS_256S_SIGNATURE_SIZE, sphincsplus_extract_signature, sphincsplus_open,
         },
@@ -205,8 +261,12 @@ mod tests {
         )
         .expect("wallet");
         let message = b"browser-ready sphincs";
-        let sealed = wallet.seal(message).expect("seal");
-        assert_eq!(sphincsplus_open(&sealed, &wallet.public_key()).expect("open"), message);
+        let sealed = wallet.sign_attached(message).expect("sign_attached");
+        // Wallet-level sign_attached signs over `ctx || message`, so low-level open
+        // recovers the domain-separated bytes, not the raw message.
+        let mut expected_opened = signing_context(wallet.descriptor()).to_vec();
+        expected_opened.extend_from_slice(message);
+        assert_eq!(sphincsplus_open(&sealed, &wallet.public_key()).expect("open"), expected_opened);
         let signature = sphincsplus_extract_signature(&sealed).expect("signature");
         assert!(verify_sphincsplus_wallet_signature(
             message,

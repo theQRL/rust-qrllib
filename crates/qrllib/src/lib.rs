@@ -9,6 +9,7 @@ pub mod legacy_xmss;
 pub mod mldsa;
 pub mod mnemonic;
 pub mod seed;
+pub mod signing_context;
 pub mod sphincsplus;
 pub mod sphincsplus_wallet;
 pub mod wallet;
@@ -21,7 +22,7 @@ pub use descriptor::Descriptor;
 pub use dilithium::{
     DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SECRET_KEY_SIZE,
     DILITHIUM_SIGNATURE_SIZE, Dilithium, dilithium_extract_message, dilithium_extract_signature,
-    dilithium_open, sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_randomized,
+    dilithium_open, sign_dilithium_with_secret_key, sign_dilithium_with_secret_key_deterministic,
     validate_dilithium_public_key, validate_dilithium_secret_key, verify_dilithium_signature,
 };
 pub use error::{QrllibError, Result};
@@ -35,11 +36,14 @@ pub use mldsa::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
     ML_DSA_87_SIGNATURE_SIZE, MlDsa87, extract_message, extract_signature, open,
     sign_with_secret_key as sign_mldsa_with_secret_key,
-    sign_with_secret_key_randomized as sign_mldsa_with_secret_key_randomized,
+    sign_with_secret_key_deterministic as sign_mldsa_with_secret_key_deterministic,
     validate_mldsa_public_key, validate_mldsa_secret_key,
 };
 pub use mnemonic::{bin_to_mnemonic, mnemonic_to_bin};
 pub use seed::{ExtendedSeed, Seed};
+pub use signing_context::{
+    SIGNING_CONTEXT_PREFIX, SIGNING_CONTEXT_SIZE, SIGNING_CONTEXT_VERSION, signing_context,
+};
 pub use sphincsplus::{
     SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
     SPHINCS_PLUS_256S_SECRET_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s,
@@ -47,7 +51,7 @@ pub use sphincsplus::{
     validate_sphincsplus_public_key, verify_sphincsplus_signature,
 };
 pub use sphincsplus_wallet::{SphincsPlus256sWallet, verify_sphincsplus_wallet_signature};
-pub use wallet::{ML_DSA_87_CONTEXT, MlDsa87Wallet, verify_mldsa87_wallet_signature};
+pub use wallet::{MlDsa87Wallet, verify_mldsa87_wallet_signature};
 pub use wallet_type::WalletType;
 pub use xmss::{
     XMSS_MAX_HEIGHT, XMSS_PUBLIC_KEY_SIZE, XMSS_SECRET_KEY_SIZE, XMSS_SEED_SIZE, XMSS_WOTS_PARAM_K,

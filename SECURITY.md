@@ -18,12 +18,14 @@ This library protects against post-quantum signature forgery under the assumptio
 
 ### Signing modes (ML-DSA-87 and Dilithium)
 
-Both ML-DSA-87 and the legacy Dilithium signer expose two signing modes per FIPS 204 §3.7:
+Both ML-DSA-87 and the legacy Dilithium signer are **hedged by default** per FIPS 204 §3.4 — the FIPS-recommended mode (TOB-QRLLIB-6):
 
-- **Deterministic (default).** `sign` / `seal` produce the same signature every time for a given (secret key, message) pair. This is the mode against which the project's ACVP and cross-verification test vectors are pinned.
-- **Hedged / randomised.** `sign_randomized` / `seal_randomized` draw a fresh 32-byte value from the system RNG on every call. The resulting signature verifies under the same public key as a deterministic one but differs byte-for-byte between calls.
+- **Hedged (default).** `sign` / `sign_attached` draw a fresh 32-byte value from the system RNG on every call. Two signs of the same `(secret_key, [context,] message)` produce **distinct** signature bytes; both verify under the same public key. Verification is unchanged and existing verifiers — on-chain or off — are unaffected.
+- **Deterministic (FIPS 204 §3.5 opt-in).** `sign_deterministic` / `sign_attached_deterministic` use a fixed all-zero per-signature value, so the same `(secret_key, [context,] message)` always yields byte-identical signatures. **Use only when the deterministic property is itself a security or protocol requirement** — for example, RANDAO-style verifiable beacon contributions where each validator must produce the same signature for the same input, or ACVP / KAT test-vector reproduction.
 
-Deterministic signing is vulnerable to fault-injection attacks: an adversary who can flip a single bit during the `z` computation can differentiate two signatures of the same message and recover `s1`/`s2` by lattice differential analysis. The hedged mode frustrates this attack because two signings of the same message use different internal randomness. Hardware wallets, cloud signers on untrusted silicon, and any deployment with a plausible fault-model should prefer the hedged entry points. SPHINCS+-256s robust is randomised-by-default per its parameter-set definition and does not expose a separate hedged mode.
+Deterministic signing is vulnerable to fault-injection attacks: an adversary who can flip a single bit during the `z` computation can differentiate two signatures of the same message and recover `s1`/`s2` by lattice differential analysis. Hedged signing frustrates this attack because two signings of the same message use different internal randomness. SPHINCS+-256s robust is randomised-by-default per its parameter-set definition and does not expose a separate deterministic mode.
+
+The free signing functions `sign_with_secret_key` (ML-DSA-87) and `sign_dilithium_with_secret_key` (Dilithium) follow the same convention: hedged by default, with `sign_with_secret_key_deterministic` / `sign_dilithium_with_secret_key_deterministic` as the explicit opt-in. ACVP, KAT, and cross-verification test vectors that pin specific signature bytes route through the deterministic entry points.
 
 ### Memory hygiene
 
@@ -31,7 +33,34 @@ Every secret-bearing public type — `Seed`, `ExtendedSeed`, `MlDsa87`, `Dilithi
 
 Accessor methods that return owned secret bytes (`seed`, `secret_key`, `secret_key_bytes`) return `zeroize::Zeroizing<T>`, so caller-held copies inherit the same drop-clear semantics. The owned wrapper dereferences transparently to the underlying byte array or `Vec<u8>` and works unchanged with `hex::encode`, `Sha256::digest`, `.iter()`, and the library's verify helpers.
 
-After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `seal`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
+After an explicit `.zeroize()`, a signer that is still reachable will not produce a bogus signature from the all-zero key: `sign`, `sign_attached`, and the `*_with_secret_key` free functions return `QrllibError::MlDsaSecretKeyZeroized` / `DilithiumSecretKeyZeroized` / `SphincsPlusSecretKeyZeroized` / `XmssSecretKeyZeroized`.
+
+### API Precondition Guarantees
+
+Every exported function in `crates/qrllib/src/` is documented with the precondition contract it enforces. The Rust type system carries most of these by construction; the table below names the contracts a reader coming from the Go-side audit would expect to find (TOB-QRLLIB cross-cutting item: precondition validation at every exported API entry point).
+
+| Surface | Contract |
+|---------|----------|
+| Public-key references | All verify / open entry points take `&[u8]` or `&[u8; N]` — neither can be null in safe Rust (vs the Go-side TOB-11 nil-pk dereference class). |
+| Wrong-size buffer inputs | Length-validating constructors return `Err(QrllibError::Invalid*Size(actual, expected))` rather than panicking; the variant names are stable. |
+| Parameter-set identifiers | `WalletType`, `XmssHashFunction`, `XmssHeight` are sum-type enums / validated newtypes constructed via `TryFrom<u8>` / `new(value)`; invalid bytes return typed errors (`QrllibError::UnknownWalletType`, `QrllibError::InvalidXmssHashFunction`, `QrllibError::InvalidXmssHeight`). There is no safe-Rust way to construct an out-of-range instance. |
+| Wallet issuance gating | `WalletType::is_issuable()` is consulted by every `SphincsPlus256sWallet` constructor and returns `Err(QrllibError::WalletTypeNotIssuable(...))` for SPHINCS+ unless `experimental-sphincsplus-issuance` (or `cfg(test)`) is set (TOB-QRLLIB-4). |
+| Stateful XMSS index | `Xmss` and `LegacyXmssWallet` do **not** implement `Clone`; accidental duplication that would cause OTS index reuse is a compile error. Index persistence remains the caller's responsibility — see `Xmss::sign` rustdoc and the "XMSS State Management" section above. |
+| Secret-bearing types | `Drop` zeroizes; accessor methods returning owned secret bytes wrap them in `zeroize::Zeroizing<T>`. Post-`.zeroize()` re-use surfaces `QrllibError::*SecretKeyZeroized` rather than producing a bogus signature. |
+| Signing mode | `sign` / `sign_attached` are hedged by default per FIPS 204 §3.4 (TOB-QRLLIB-6); `sign_deterministic` / `sign_attached_deterministic` are the explicit opt-in for protocols that need byte-identical signatures. |
+| Panic policy | Production code panics **only** on invariant violations that mark a regression in upstream validation (currently the single `chunks_exact(4)` tripwire in `sphincsplus::bytes_to_addr`); malformed user input always returns a typed `Result::Err`. |
+
+### Audit-derived design choices (mapping from `go-qrllib` Trail of Bits findings)
+
+The Trail of Bits audit was scoped to the Go implementation (`go-qrllib`). Several of its findings have no Rust-port analogue because the Rust port's type system, ownership model, or API surface already eliminates the failure mode. They are recorded here so a reader coming from the Go advisory can see the Rust-side reasoning:
+
+- **Invalid XMSS hash-function values (TOB-QRLLIB-13).** The Go advisory describes a path where `xmss.HashFunction(99)` — a raw integer cast that bypasses the validating constructor — reaches `coreHash`'s dispatch switch, falls through the missing `default`, leaves the output buffer zero-initialised, and produces a degenerate zero-rooted XMSS whose signatures cross-verify with each other's public keys. The Rust port's [`XmssHashFunction`](crates/qrllib/src/xmss.rs) is a closed `enum` constructed via `TryFrom<u8>`, which returns `QrllibError::InvalidXmssHashFunction(value)` on any byte outside `{0, 1, 2}`. There is no safe-Rust way to instantiate an out-of-range `XmssHashFunction`, so the attack vector cannot exist at the type-system level.
+- **Nil public-key dereferences (TOB-QRLLIB-11).** All Rust verify / open entry points take `&[u8]` slices or fixed-size `&[u8; N]` array references, neither of which can be null in safe Rust. The Go-side nil-pk guard requirements have no Rust analogue.
+- **`Open` collapsing distinct failure modes into `nil` (TOB-QRLLIB-14).** Rust verify / open helpers already return `Result<…, QrllibError>` or `Option<&[u8]>` per idiomatic Rust error handling. The Go-side rewrite to typed sentinels is already-by-construction in Rust.
+- **Inconsistent ML-DSA secret-material zeroisation (TOB-QRLLIB-10).** Every secret-bearing public type implements `Drop` that zeroizes its backing buffer, and accessors that return owned secret bytes wrap them in `zeroize::Zeroizing<T>` so callers inherit the same clear-on-drop semantics (see the **Memory hygiene** section above).
+- **XMSS height accepts out-of-range values (TOB-QRLLIB-2).** [`XmssHeight`](crates/qrllib/src/xmss.rs) is a validated newtype constructed via `XmssHeight::new(value)`, which returns `QrllibError::InvalidXmssHeight(value)` on any value outside the allowed range; the validating constructor is the only way to obtain an `XmssHeight`.
+
+The Go-side findings that *do* port to Rust are tracked separately in `~/Obsidian/QRL/post-audit-rust.md`; the per-file rustdoc cross-references the relevant TOB-QRLLIB-* identifier where it applies.
 
 ### Browser surface (wasm)
 

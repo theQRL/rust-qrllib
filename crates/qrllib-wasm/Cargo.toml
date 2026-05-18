@@ -14,5 +14,16 @@ serde.workspace = true
 serde-wasm-bindgen.workspace = true
 wasm-bindgen.workspace = true
 
+[features]
+# Mirror of `qrllib`'s `experimental-sphincsplus-issuance` (TOB-QRLLIB-4).
+# Disabled by default — SPHINCS+ wallet creation through the wasm
+# bindings will return `WalletTypeNotIssuable` to the JS caller until
+# QRL adopts a specific SLH-DSA parameter set under FIPS 205.
+# Enable locally for development / demo builds where SPHINCS+ wallet
+# generation is needed:
+#
+#     wasm-pack build --features experimental-sphincsplus-issuance
+experimental-sphincsplus-issuance = ["qrllib/experimental-sphincsplus-issuance"]
+
 [lib]
 crate-type = ["cdylib", "rlib"]

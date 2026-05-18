@@ -3,6 +3,11 @@ use sha2::{Digest, Sha256};
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use zeroize::{Zeroize, Zeroizing};
 
+/// RFC 8391 reference-implementation interop sub-module. See its
+/// module doc for the bidirectional cross-verify story
+/// (TOB-QRLLIB-1 part 2).
+pub mod rfc8391;
+
 const OFFSET_IDX: usize = 0;
 const OFFSET_SK_SEED: usize = OFFSET_IDX + 4;
 const OFFSET_SK_PRF: usize = OFFSET_SK_SEED + 32;
@@ -17,11 +22,42 @@ pub const XMSS_WOTS_PARAM_K: u32 = 2;
 pub const XMSS_WOTS_PARAM_W: u32 = 16;
 pub const XMSS_WOTS_PARAM_N: u32 = 32;
 
+/// Hash-function selector for the XMSS construction.
+///
+/// QRL's XMSS implementation **predates RFC 8391** (which standardised
+/// XMSS in August 2018) and is retained here as a v1 → v2 migration
+/// vehicle rather than as a standards-tracking XMSS implementation.
+/// The supported values reflect QRL's pre-standardisation choices; only
+/// `Sha2_256` and `Shake256` overlap with parameter sets published in
+/// RFC 8391 / NIST SP 800-208. See `SECURITY.md` for the full
+/// parameter-set provenance discussion (TOB-QRLLIB-7).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum XmssHashFunction {
+    /// XMSS-SHA2_*_256 family — signature format matches RFC 8391
+    /// (August 2018). Note that the `expand_seed` construction here
+    /// follows the original RFC 8391 form, not the NIST SP 800-208
+    /// (October 2020) refinement; see `SECURITY.md` "Standards
+    /// alignment" for the rationale.
     Sha2_256 = 0,
+
+    /// **QRL-specific extension, retained for legacy address
+    /// compatibility from QRL's pre-standardisation XMSS
+    /// implementation.** Not part of RFC 8391 or NIST SP 800-208.
+    /// With a 32-byte output it offers approximately 64-bit quantum
+    /// security under a Grover-style attack — theoretically reduced
+    /// relative to `Shake256` / `Sha2_256` (~128-bit quantum),
+    /// although the gap remains difficult to exploit in practice
+    /// today. **Not recommended for new wallets.** Existing v1
+    /// mainnet addresses minted under SHAKE_128 must continue to be
+    /// parseable, verifiable and signable, which is the only reason
+    /// this option survives. New issuance on QRL is moving to
+    /// ML-DSA-87 (FIPS 204). (TOB-QRLLIB-7.)
     Shake128 = 1,
+
+    /// XMSS-SHAKE_*_256 family — signature format matches RFC 8391
+    /// (August 2018). Same `expand_seed`-vs-SP-800-208 caveat as
+    /// [`Sha2_256`]; see `SECURITY.md` "Standards alignment".
     Shake256 = 2,
 }
 
@@ -175,6 +211,10 @@ impl Xmss {
         seed: &[u8],
     ) -> Result<Self> {
         let height_u32 = height.as_u32();
+        // Coverage: `XmssHeight` only admits even values in [2, XMSS_MAX_HEIGHT]
+        // and XMSS_WOTS_PARAM_K is the compile-time constant 2, so this guard
+        // never fires for any constructible height. Kept to assert BDS-state
+        // pre-conditions for auditors reading the function in isolation.
         if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
             return Err(QrllibError::InvalidXmssBdsParams);
         }
@@ -184,6 +224,9 @@ impl Xmss {
         let mut bds_state = BdsState::new(height_u32, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
         let mut pk = vec![0_u8; XMSS_PUBLIC_KEY_SIZE];
         let mut sk = vec![0_u8; XMSS_SECRET_KEY_SIZE];
+        // Coverage: the `?` error-propagation arm is unreachable because every
+        // validated `XmssHeight` / `XmssHashFunction` / seed combination produces
+        // a successful keypair. Kept to surface internal invariant violations.
         xmss_fast_gen_key_pair(
             hash_function,
             &xmss_params,
@@ -194,6 +237,58 @@ impl Xmss {
         )?;
 
         Ok(Self { xmss_params, hash_function, height, seed: seed.to_vec(), sk, bds_state })
+    }
+
+    /// Initialise an XMSS tree from 96 bytes of **already-expanded**
+    /// seed material (`SK_SEED || SK_PRF || PUB_SEED`), bypassing the
+    /// QRL-specific SHAKE-256 expansion that [`Xmss::initialize_tree`]
+    /// applies to a 48-byte seed.
+    ///
+    /// This matches the layout the RFC 8391 reference implementation
+    /// consumes directly, and is what the [`crate::xmss::rfc8391`]
+    /// interop module uses to provide bidirectional cross-verify with
+    /// the reference. QRL wallet code should use
+    /// [`Xmss::initialize_tree`] instead — the 48-byte seed expansion
+    /// is the only path that produces v1 mainnet addresses.
+    ///
+    /// (TOB-QRLLIB-1 part 2 — Rust-port parity with the Go-side
+    /// `xmss.InitializeTreeFromExpandedSeed`.)
+    pub fn initialize_tree_from_expanded_seed(
+        height: XmssHeight,
+        hash_function: XmssHashFunction,
+        expanded_seed: &[u8; 96],
+    ) -> Result<Self> {
+        let height_u32 = height.as_u32();
+        if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
+            return Err(QrllibError::InvalidXmssBdsParams);
+        }
+
+        let xmss_params =
+            XmssParams::new(XMSS_WOTS_PARAM_N, height_u32, XMSS_WOTS_PARAM_W, XMSS_WOTS_PARAM_K)?;
+        let mut bds_state = BdsState::new(height_u32, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
+        let mut pk = vec![0_u8; XMSS_PUBLIC_KEY_SIZE];
+        let mut sk = vec![0_u8; XMSS_SECRET_KEY_SIZE];
+        xmss_fast_gen_key_pair_from_expanded_seed(
+            hash_function,
+            &xmss_params,
+            &mut pk,
+            &mut sk,
+            &mut bds_state,
+            expanded_seed,
+        )?;
+
+        // The struct's `seed` field stores the 96-byte expanded seed
+        // (the input to the keypair-derivation core); QRL `initialize_tree`
+        // would have stored the 48-byte caller-supplied seed instead.
+        // Either way, `seed()` round-trips for the consumer.
+        Ok(Self {
+            xmss_params,
+            hash_function,
+            height,
+            seed: expanded_seed.to_vec(),
+            sk,
+            bds_state,
+        })
     }
 
     /// Returns a zeroizing copy of the XMSS seed. The returned value
@@ -247,6 +342,37 @@ impl Xmss {
         )
     }
 
+    /// Produce an XMSS signature over `message` using the next unused
+    /// one-time-signature index, then advance the internal index.
+    ///
+    /// # CRITICAL — index persistence (TOB-QRLLIB-8)
+    ///
+    /// XMSS is a stateful one-time-signature scheme. The internal OTS
+    /// index returned by [`Xmss::index`] **MUST** be persisted to
+    /// durable storage *after* this call returns and *before* the
+    /// returned signature is used or broadcast. If the process crashes
+    /// or the persist step fails between this `sign` returning and the
+    /// signature being committed, restarting from the previously-saved
+    /// index will reuse the OTS key for a different message — and a
+    /// single OTS key reuse lets any observer forge signatures on
+    /// (most) messages under the same public key, an irreversible
+    /// compromise of the entire tree.
+    ///
+    /// The safe pattern is:
+    ///
+    /// ```ignore
+    /// let sig = tree.sign(&message)?;
+    /// persist_index(tree.index())?;  // MUST succeed before...
+    /// broadcast(sig);                 // ...the signature leaves the host.
+    /// ```
+    ///
+    /// If `persist_index` fails, the signature **must not** be used —
+    /// drop it and treat the in-memory tree as compromised relative to
+    /// the persisted state until the index can be reconciled.
+    ///
+    /// See the `Xmss` type doc and `SECURITY.md` "XMSS State Management"
+    /// for the full set of requirements (no concurrent signing, no
+    /// state rollback, key rotation before tree exhaustion).
     pub fn sign(&mut self, message: &[u8]) -> Result<Vec<u8>> {
         let index = self.index();
         self.set_index(index)?;
@@ -322,6 +448,9 @@ pub fn verify_xmss_with_custom_wots_param_w(
         return false;
     }
 
+    // Coverage: `WotsParams::new` only fails when `wots_param_w` is outside
+    // {4, 16, 256}, but the preceding `matches!` guard already rejects those.
+    // Kept as defence-in-depth if the two guards ever drift apart.
     let Ok(wots_params) = WotsParams::new(XMSS_WOTS_PARAM_N, wots_param_w) else {
         return false;
     };
@@ -337,6 +466,10 @@ pub fn verify_xmss_with_custom_wots_param_w(
         return false;
     }
 
+    // Coverage: `get_xmss_height_from_sig_size` returns Err only when the size
+    // bounds above are violated — already rejected. Kept for symmetry with the
+    // reference implementation; adding callers from other entry points could
+    // reach it.
     let Ok(height) = get_xmss_height_from_sig_size(sig_size, wots_param_w) else {
         return false;
     };
@@ -345,6 +478,8 @@ pub fn verify_xmss_with_custom_wots_param_w(
         return false;
     }
 
+    // Coverage: `XmssParams::new` only fails for `wots_param_w` outside
+    // {4, 16, 256} — already rejected. Kept as defence-in-depth.
     let Ok(params) =
         XmssParams::new(XMSS_WOTS_PARAM_N, height_u32, wots_param_w, XMSS_WOTS_PARAM_K)
     else {
@@ -533,7 +668,21 @@ fn hash_h(
     core_hash(hash_function, output, 1, &key, &buf, n as u32);
 }
 
-fn prf(hash_function: XmssHashFunction, output: &mut [u8], input: &[u8], key: &[u8], key_len: u32) {
+/// PRF computes the RFC 8391 pseudo-random function over a fixed
+/// 32-byte input. The `input` parameter is typed `&[u8; 32]` rather
+/// than `&[u8]` to pin the input length at compile time: every call
+/// site already passes a 32-byte stack-allocated array, and the
+/// underlying `core_hash` dispatch reads exactly 32 bytes regardless
+/// of slice length, so a shorter slice would silently truncate the
+/// PRF domain separator. (TOB-QRLLIB-5 — Rust-port parity with the
+/// Go-side `*[32]uint8` pin.)
+fn prf(
+    hash_function: XmssHashFunction,
+    output: &mut [u8],
+    input: &[u8; 32],
+    key: &[u8],
+    key_len: u32,
+) {
     let _ = key_len;
     core_hash(hash_function, output, 3, key, input, output.len() as u32);
 }
@@ -869,6 +1018,43 @@ fn xmss_fast_gen_key_pair(
     bds_state: &mut BdsState,
     seed: &[u8],
 ) -> Result<()> {
+    // QRL convention: SHAKE-256-expand the caller-supplied seed into 96
+    // bytes of (SK_SEED || SK_PRF || PUB_SEED), then delegate to the
+    // shared keypair-derivation core. The RFC 8391 reference takes the
+    // 96 bytes directly — see [`xmss_fast_gen_key_pair_from_expanded_seed`]
+    // and the `rfc8391` interop module.
+    let mut expanded_seed = [0_u8; 96];
+    shake256(&mut expanded_seed, seed);
+    xmss_fast_gen_key_pair_from_expanded_seed(
+        hash_function,
+        xmss_params,
+        public_key,
+        secret_key,
+        bds_state,
+        &expanded_seed,
+    )
+}
+
+/// Shared keypair-derivation core for the QRL XMSS construction. Takes
+/// 96 bytes of pre-expanded seed material (`SK_SEED || SK_PRF ||
+/// PUB_SEED`) directly — same layout as RFC 8391's reference
+/// implementation — and writes the secret key + Merkle root +
+/// public_seed into the caller-supplied buffers.
+///
+/// Both the QRL primary entry point ([`xmss_fast_gen_key_pair`], which
+/// SHAKE-256-expands a 48-byte QRL seed first) and the RFC 8391 interop
+/// path ([`crate::xmss::rfc8391::new_keypair`], which takes the 96
+/// bytes directly) call into this function after their respective seed
+/// preprocessing. (TOB-QRLLIB-1 part 2 — Rust-port parity with the
+/// Go-side `XMSSFastGenKeyPairFromExpandedSeed`.)
+fn xmss_fast_gen_key_pair_from_expanded_seed(
+    hash_function: XmssHashFunction,
+    xmss_params: &XmssParams,
+    public_key: &mut [u8],
+    secret_key: &mut [u8],
+    bds_state: &mut BdsState,
+    expanded_seed: &[u8; 96],
+) -> Result<()> {
     if xmss_params.h & 1 == 1 {
         return Err(QrllibError::InvalidXmssHeight(xmss_params.h as u8));
     }
@@ -876,9 +1062,7 @@ fn xmss_fast_gen_key_pair(
     let n = xmss_params.n as usize;
     write_index(secret_key, 0);
 
-    let mut random_bits = vec![0_u8; 3 * n];
-    shake256(&mut random_bits, seed);
-    secret_key[4..100].copy_from_slice(&random_bits[..96]);
+    secret_key[4..100].copy_from_slice(&expanded_seed[..96]);
     public_key[n..n + 32].copy_from_slice(&secret_key[4 + 2 * n..4 + 2 * n + 32]);
 
     let address = vec![0_u32; 8];
@@ -1004,6 +1188,10 @@ fn xmss_fast_update(
     let mut ots_address = [0_u32; 8];
 
     for index in current_idx..new_idx {
+        // Coverage: unreachable because `new_idx` is clamped by the earlier
+        // `XmssOtsIndexTooHigh` check against `num_elements`. Kept as an
+        // internal-invariant assertion — if BDS bookkeeping ever drifts, we
+        // surface it as an error rather than indexing out of bounds.
         if index >= num_elements {
             return Err(QrllibError::XmssInternal);
         }
@@ -1452,6 +1640,9 @@ fn verify_sig(
     to_byte_big_endian(&mut hash_key[2 * n..3 * n], idx, n);
 
     let mut message_hash = vec![0_u8; n];
+    // Coverage: `h_msg` only errors on unsupported hash-function tags, but the
+    // caller selected one from `XmssHashFunction` — all three variants are
+    // supported. Kept as defence-in-depth.
     if h_msg(hash_function, &mut message_hash, message, &hash_key, n as u32).is_err() {
         return false;
     }

@@ -5,6 +5,11 @@ on: [push, pull_request]
 permissions:
   contents: read
 
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   workspace-tests:
     name: Workspace Tests
@@ -13,6 +18,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -27,12 +34,26 @@ jobs:
       - name: Run workspace tests
         run: cargo test --workspace --locked
 
+      - name: Run exhaustive metamorphic invariant sweep
+        # Port of the ToB-handoff `metamorphic_test.go` exhaustive
+        # bit-by-bit tests. Slow (~12s in release mode); gated behind
+        # `METAMORPHIC_EXHAUSTIVE=1` so day-to-day `cargo test` skips
+        # the iteration loops. Run in release mode here for the speed
+        # difference. See `crates/qrllib/tests/metamorphic_exhaustive.rs`
+        # for the property contracts.
+        timeout-minutes: 10
+        env:
+          METAMORPHIC_EXHAUSTIVE: '1'
+        run: cargo test --release --locked --package qrllib --test metamorphic_exhaustive
+
   coverage:
     name: Coverage
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
@@ -64,6 +85,8 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+        with:
+          persist-credentials: false
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable

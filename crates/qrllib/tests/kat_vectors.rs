@@ -4,7 +4,7 @@ use qrllib::{
     SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
     SPHINCS_PLUS_256S_SECRET_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s,
     dilithium_extract_message, dilithium_extract_signature, dilithium_open, extract_message,
-    extract_signature, mldsa::verify_bytes, open, sign_dilithium_with_secret_key,
+    extract_signature, mldsa::verify_bytes, open, sign_dilithium_with_secret_key_deterministic,
     sphincsplus_extract_message, sphincsplus_extract_signature, sphincsplus_open,
     verify_dilithium_signature, verify_sphincsplus_signature,
 };
@@ -101,8 +101,10 @@ fn dilithium_known_answer_vectors_cover_deterministic_api_contracts() {
         let imported = Dilithium::from_hex_seed(&signer_a.hex_seed()).expect("hex import");
         assert_eq!(imported.public_key_bytes(), signer_a.public_key_bytes(), "{}", vector.name);
 
-        let signature_a = signer_a.sign(&message).expect("signature a");
-        let signature_b = signer_a.sign(&message).expect("signature b");
+        // KAT byte-equality assertions require FIPS 204 §3.5 deterministic
+        // mode; the default `sign` is now hedged per TOB-QRLLIB-6.
+        let signature_a = signer_a.sign_deterministic(&message).expect("signature a");
+        let signature_b = signer_a.sign_deterministic(&message).expect("signature b");
         assert_eq!(signature_a, signature_b, "{}", vector.name);
         assert!(
             verify_dilithium_signature(&message, &signature_a, &signer_a.public_key_bytes()),
@@ -110,9 +112,11 @@ fn dilithium_known_answer_vectors_cover_deterministic_api_contracts() {
             vector.name
         );
 
-        let signature_from_sk =
-            sign_dilithium_with_secret_key(&message, signer_a.secret_key_bytes().as_slice())
-                .expect("sign with secret key");
+        let signature_from_sk = sign_dilithium_with_secret_key_deterministic(
+            &message,
+            signer_a.secret_key_bytes().as_slice(),
+        )
+        .expect("sign with secret key (deterministic for KAT vector reproduction)");
         assert_eq!(signature_a, signature_from_sk, "{}", vector.name);
 
         let mut sealed = signature_from_sk.to_vec();
@@ -182,8 +186,10 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
         let imported = MlDsa87::from_hex_seed(&signer_a.hex_seed()).expect("hex import");
         assert_eq!(imported.public_key_bytes(), signer_a.public_key_bytes(), "{}", vector.name);
 
-        let signature_a = signer_a.sign(&context, &message).expect("signature a");
-        let signature_b = signer_a.sign(&context, &message).expect("signature b");
+        // KAT byte-equality assertions require FIPS 204 §3.5 deterministic
+        // mode; the default `sign` is now hedged per TOB-QRLLIB-6.
+        let signature_a = signer_a.sign_deterministic(&context, &message).expect("signature a");
+        let signature_b = signer_a.sign_deterministic(&context, &message).expect("signature b");
         assert!(
             verify_bytes(&context, &message, &signature_a, &signer_a.public_key_bytes())
                 .expect("verify"),
