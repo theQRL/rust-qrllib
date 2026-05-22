@@ -1,6 +1,6 @@
 use crate::{
     ADDRESS_SIZE,
-    address::{format_address, unsafe_get_address},
+    address::{format_address, to_checksum_address, unsafe_get_address},
     descriptor::Descriptor,
     error::{QrllibError, Result},
     mldsa::{ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87, verify_bytes},
@@ -120,6 +120,16 @@ impl MlDsa87Wallet {
 
     pub fn address_string(&self) -> String {
         format_address(&self.address())
+    }
+
+    /// Returns the EIP-55-style mixed-case checksummed string form of the
+    /// wallet address (see [`crate::address::to_checksum_address`]). Use
+    /// this in user-facing displays where transcription-error detection is
+    /// desirable; [`Self::address_string`] remains the canonical lowercase
+    /// form for backward compatibility with code that string-compares
+    /// addresses.
+    pub fn checksum_address_string(&self) -> String {
+        to_checksum_address(&self.address())
     }
 
     /// Produce an ML-DSA-87 signature over `message` using the

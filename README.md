@@ -75,7 +75,7 @@ Common wallet accessors:
 
 | Type | Accessors |
 |------|-----------|
-| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign` (hedged), `sign_deterministic`, `zeroize` |
+| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `checksum_address_string`, `sign` (hedged), `sign_deterministic`, `zeroize` |
 | `SphincsPlus256sWallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `sign_attached`, `zeroize` |
 | `LegacyXmssWallet` | `height`, `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `root`, `public_key`, `secret_key`, `address`, `index`, `set_index`, `sign`, `descriptor`, `zeroize` |
 
@@ -191,7 +191,7 @@ Low-level verification and sealed-message helpers:
 | `WalletType` | Modern wallet algorithm identifier |
 | `QrlDescriptor` | Legacy XMSS descriptor |
 | `XmssHashFunction`, `XmssHeight` | XMSS parameter types |
-| `format_address`, `get_address`, `is_valid_address` | Modern QRL address helpers |
+| `format_address`, `get_address`, `is_valid_address`, `to_checksum_address`, `is_valid_checksum_address` | Modern QRL address helpers. `format_address` emits the canonical lowercase form; `to_checksum_address` emits the EIP-55-style mixed-case checksummed form. `is_valid_address` is permissive (accepts uniform-case or checksummed); `is_valid_checksum_address` is strict (canonical checksummed form only). |
 | `get_xmss_address_from_pk`, `is_valid_xmss_address` | Legacy XMSS address helpers |
 | `bin_to_mnemonic`, `mnemonic_to_bin` | QRL wordlist conversion helpers |
 | `signing_context`, `SIGNING_CONTEXT_VERSION`, `SIGNING_CONTEXT_PREFIX`, `SIGNING_CONTEXT_SIZE` | Domain-separated signing-context helpers used by wallet-level sign/verify |

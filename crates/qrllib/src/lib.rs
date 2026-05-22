@@ -17,7 +17,10 @@ pub mod wallet_type;
 mod wordlist;
 pub mod xmss;
 
-pub use address::{format_address, get_address, is_valid_address};
+pub use address::{
+    format_address, get_address, is_valid_address, is_valid_checksum_address,
+    to_checksum_address,
+};
 pub use descriptor::Descriptor;
 pub use dilithium::{
     DILITHIUM_CRYPTO_SEED_SIZE, DILITHIUM_PUBLIC_KEY_SIZE, DILITHIUM_SECRET_KEY_SIZE,
