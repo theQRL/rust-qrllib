@@ -167,9 +167,7 @@ pub fn is_valid_checksum_address(address: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        format_address, is_valid_address, is_valid_checksum_address, to_checksum_address,
-    };
+    use super::{format_address, is_valid_address, is_valid_checksum_address, to_checksum_address};
     use crate::ADDRESS_SIZE;
 
     /// Cross-implementation parity vectors. Identical bytes must produce
@@ -317,8 +315,14 @@ mod tests {
     fn is_valid_checksum_address_rejects_uniform_case_with_letters() {
         let v = PARITY_VECTORS[0];
         let upper = format!("Q{}", v.1[1..].to_ascii_uppercase());
-        assert!(!is_valid_checksum_address(v.1), "all-lowercase with letters must fail strict check");
-        assert!(!is_valid_checksum_address(&upper), "all-uppercase with letters must fail strict check");
+        assert!(
+            !is_valid_checksum_address(v.1),
+            "all-lowercase with letters must fail strict check"
+        );
+        assert!(
+            !is_valid_checksum_address(&upper),
+            "all-uppercase with letters must fail strict check"
+        );
     }
 
     #[test]
@@ -330,11 +334,7 @@ mod tests {
 
     #[test]
     fn is_valid_checksum_address_accepts_digit_only_hex() {
-        let digit_only: String = format!(
-            "Q{}{}",
-            "0123456789".repeat(12),
-            "01234567",
-        );
+        let digit_only: String = format!("Q{}{}", "0123456789".repeat(12), "01234567",);
         assert_eq!(digit_only.len(), 1 + ADDRESS_SIZE * 2);
         assert!(is_valid_checksum_address(&digit_only));
     }
@@ -361,11 +361,8 @@ mod tests {
             .expect("parity vector must contain a hex letter")
             + 1;
         let c = bytes[flip_idx];
-        bytes[flip_idx] = if c.is_ascii_lowercase() {
-            c - (b'a' - b'A')
-        } else {
-            c + (b'a' - b'A')
-        };
+        bytes[flip_idx] =
+            if c.is_ascii_lowercase() { c - (b'a' - b'A') } else { c + (b'a' - b'A') };
         let corrupted = String::from_utf8(bytes).unwrap();
         assert!(!is_valid_address(&corrupted), "case-flipped checksum must be rejected");
     }
