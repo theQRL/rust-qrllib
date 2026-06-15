@@ -38,7 +38,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Update release PR
         uses: release-plz/action@ef08e716ba77de37dd17b19d72ed171a2e1b63ab # v0.5
@@ -71,7 +71,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Cache Rust
-        uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Run release-plz
         id: release-plz
