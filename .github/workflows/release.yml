@@ -131,13 +131,13 @@ jobs:
 
       # Attest SBOM files
       - name: Attest SBOM (SPDX)
-        uses: actions/attest-sbom@36590ecaf038d6630c74f2da259095627d52ac11 # v4
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
         with:
           subject-path: dist/sbom-spdx.json
           sbom-path: dist/sbom-spdx.json
 
       - name: Attest SBOM (CycloneDX)
-        uses: actions/attest-sbom@36590ecaf038d6630c74f2da259095627d52ac11 # v4
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4
         with:
           subject-path: dist/sbom-cyclonedx.json
           sbom-path: dist/sbom-cyclonedx.json
