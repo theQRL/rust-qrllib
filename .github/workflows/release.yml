@@ -123,7 +123,7 @@ jobs:
 
       # Attest checksums with GitHub attestations (Sigstore-backed)
       - name: Attest checksums
-        uses: actions/attest-build-provenance@b3e506e8c389afc651c5bacf2b8f2a1ea0557215 # v4
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
         with:
           subject-path: |
             dist/checksums-sha256.txt
@@ -144,7 +144,7 @@ jobs:
 
       # Attest the workspace manifests and release policy files directly.
       - name: Attest module files
-        uses: actions/attest-build-provenance@b3e506e8c389afc651c5bacf2b8f2a1ea0557215 # v4
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4
         with:
           subject-path: |
             Cargo.toml
