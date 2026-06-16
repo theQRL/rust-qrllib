@@ -51,9 +51,11 @@ jobs:
     name: Release
     runs-on: ubuntu-latest
     if: (github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib') && vars.RELEASE_ENABLED == 'true'
+    environment: crates-publish
     permissions:
       contents: write       # release-plz creates the git tag + GitHub release
       pull-requests: read   # release-plz reads PR labels to decide release notes
+      id-token: write       # crates.io trusted publishing (OIDC)
     outputs:
       releases_created: ${{ steps.release-plz.outputs.releases_created }}
       releases: ${{ steps.release-plz.outputs.releases }}
@@ -73,6 +75,10 @@ jobs:
       - name: Cache Rust
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
+      - name: Authenticate to crates.io (OIDC)
+        id: crates-auth
+        uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1.0.5
+
       - name: Run release-plz
         id: release-plz
         uses: release-plz/action@ef08e716ba77de37dd17b19d72ed171a2e1b63ab # v0.5
@@ -80,6 +86,7 @@ jobs:
           command: release
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN != '' && secrets.RELEASE_PLZ_TOKEN || github.token }}
+          CARGO_REGISTRY_TOKEN: ${{ steps.crates-auth.outputs.token }}
 
   # Generate checksums, SBOM, and attestations for the release
   supply-chain-security:
@@ -202,8 +209,6 @@ jobs:
       actions: read         # required by slsa-github-generator to read this workflow run's metadata
       id-token: write       # required by slsa-github-generator to mint the SLSA provenance OIDC token
       contents: write       # required by slsa-github-generator to upload the provenance file to the release
-    # Tag pin (not SHA) is mandatory: the generator verifies its own caller ref
-    # and rejects non-tag refs — a SHA fails builder fetch with "Invalid ref".
     uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.compute-subjects.outputs.hashes }}
@@ -211,11 +216,6 @@ jobs:
       upload-tag-name: ${{ fromJSON(needs.release.outputs.releases)[0].tag }}
       provenance-name: provenance.intoto.jsonl
 
-  # Publish the WASM bindings to npm (@theqrl/qrllib-wasm), in lockstep with the
-  # crates.io release. Uses npm trusted publishing (OIDC) — no stored token; the
-  # npm-publish environment + id-token bind the publish to this workflow,
-  # mirroring js-qrl-cryptography. The version comes from
-  # crates/qrllib-wasm/Cargo.toml, kept in lockstep by version_group.
   publish-wasm:
     name: Publish qrllib-wasm to npm
     runs-on: ubuntu-latest
@@ -249,9 +249,6 @@ jobs:
         with:
           node-version: '24.13.0'
 
-      # Trusted publishing needs npm >= 11.5.1. Exact-pin (not a ^range): this is
-      # a publish-privileged run-time resolution, so it's a pin like any other
-      # (house rule — pin every resolution path in publish jobs).
       - name: Use npm for trusted publishing
         run: npm install -g npm@11.5.1
 

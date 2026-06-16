@@ -66,20 +66,28 @@ demand: Actions → **Release** → **Run workflow** (`workflow_dispatch`).
 
 ## 3. Publishing to crates.io (`qrllib`)
 
-Controlled by the `publish` flag for the `qrllib` package in `release-plz.toml`:
+Controlled by the `publish` flag for the `qrllib` package in `release-plz.toml`
+(currently **`publish = true`**):
 
-- **`publish = true`** → the `release` job runs `cargo publish` automatically,
-  using the `CARGO_REGISTRY_TOKEN` repository secret (already configured).
+- **`publish = true`** → the `release` job publishes `qrllib` automatically via
+  **crates.io trusted publishing (OIDC)** — no stored token. The job mints a
+  short-lived registry token with [`rust-lang/crates-io-auth-action`](https://github.com/rust-lang/crates-io-auth-action)
+  from its `id-token` identity and passes it to release-plz as
+  `CARGO_REGISTRY_TOKEN` (revoked when the job ends). This mirrors the npm
+  trusted-publishing setup in §4.
 - **`publish = false`** (or unset) → release-plz creates the tag/release but does
   **not** publish. Publish manually once the tag exists:
 
   ```bash
-  cargo publish -p qrllib    # from the tagged commit; needs `cargo login` or CARGO_REGISTRY_TOKEN
+  cargo publish -p qrllib    # from the tagged commit; needs `cargo login`
   ```
 
-The inaugural `0.1.0` was published manually. To switch to automated publishing,
-set `publish = true` under the `[[package]] name = "qrllib"` entry (leave
-`qrllib-wasm` unpublished).
+**One-time setup (no secret to store):** on crates.io, open the `qrllib` crate →
+**Settings → Trusted Publishing** (GitHub Actions) and set repository
+`theqrl/rust-qrllib`, workflow `release.yml`, and environment `crates-publish`
+(it must match the `environment:` on the `release` job). Until that's configured
+the auth step can't mint a token and the publish step fails. (The inaugural `0.1.0` was
+published manually, before this was wired up.)
 
 > crates.io releases are **immutable** — a version can only be yanked, never
 > overwritten. Never reuse a version number that is already live.
