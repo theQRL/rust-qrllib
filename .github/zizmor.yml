@@ -11,6 +11,17 @@
 # than suppress it here.
 
 rules:
+  unpinned-uses:
+    # The SLSA generic generator is the one exception to this repo's
+    # hash-pinning rule: its reusable workflow MUST be referenced by a semver
+    # tag — it verifies its own caller ref and rejects non-tag refs (a SHA
+    # fails the builder fetch with "Invalid ref"). Allow ref-pinning for that
+    # one action; the blanket policy keeps everything else hash-pinned.
+    config:
+      policies:
+        slsa-framework/slsa-github-generator: ref-pin
+        "*": hash-pin
+
   superfluous-actions:
     # `dtolnay/rust-toolchain` is the de facto standard for installing a
     # specific Rust toolchain in CI; the alternative (`rustup` in a script

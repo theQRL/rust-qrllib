@@ -202,7 +202,9 @@ jobs:
       actions: read         # required by slsa-github-generator to read this workflow run's metadata
       id-token: write       # required by slsa-github-generator to mint the SLSA provenance OIDC token
       contents: write       # required by slsa-github-generator to upload the provenance file to the release
-    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@f7dd8c54c2067bafc12ca7a55595d5ee9b75204a # v2.1.0
+    # Tag pin (not SHA) is mandatory: the generator verifies its own caller ref
+    # and rejects non-tag refs — a SHA fails builder fetch with "Invalid ref".
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
     with:
       base64-subjects: ${{ needs.compute-subjects.outputs.hashes }}
       upload-assets: true
