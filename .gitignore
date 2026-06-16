@@ -12,4 +12,6 @@ crates/qrllib-wasm/pkg/
 # Test binaries
 *.test
 *.prof
-/.DS_Store
+
+# macOS
+.DS_Store
