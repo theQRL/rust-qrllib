@@ -206,4 +206,5 @@ jobs:
     with:
       base64-subjects: ${{ needs.compute-subjects.outputs.hashes }}
       upload-assets: true
+      upload-tag-name: ${{ fromJSON(needs.release.outputs.releases)[0].tag }}
       provenance-name: provenance.intoto.jsonl
