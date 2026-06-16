@@ -24,7 +24,7 @@ const _: () = assert!(ADDRESS_SIZE <= 64);
 pub fn unsafe_get_address(public_key: &[u8], descriptor: Descriptor) -> [u8; ADDRESS_SIZE] {
     use sha3::digest::{ExtendableOutput, Update, XofReader};
 
-    let mut hasher = sha3::Shake256::default();
+    let mut hasher = shake::Shake256::default();
     hasher.update(descriptor.as_ref());
     hasher.update(public_key);
 
@@ -78,7 +78,7 @@ fn checksummed_hex(lower_hex: &str) -> String {
     debug_assert_eq!(lower_hex.len(), HEX_LEN);
     debug_assert!(lower_hex.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)));
 
-    let mut hasher = sha3::Shake256::default();
+    let mut hasher = shake::Shake256::default();
     hasher.update(lower_hex.as_bytes());
     let mut hash = [0_u8; ADDRESS_SIZE];
     let mut reader = hasher.finalize_xof();

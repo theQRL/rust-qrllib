@@ -30,9 +30,10 @@
 
 use crate::error::{QrllibError, Result};
 use sha3::{
-    Digest, Sha3_256, Sha3_512, Shake128, Shake256,
+    Digest, Sha3_256, Sha3_512,
     digest::{ExtendableOutput, Update, XofReader},
 };
+use shake::{Shake128, Shake256};
 use zeroize::{Zeroize, Zeroizing};
 
 // ---------------------------------------------------------------------------

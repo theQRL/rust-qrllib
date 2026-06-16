@@ -4,7 +4,7 @@ use crate::{
     error::{QrllibError, Result},
 };
 use sha2::Digest;
-use sha3::Shake256;
+use shake::Shake256;
 use zeroize::Zeroize;
 
 #[derive(Clone, Debug, Eq, PartialEq)]

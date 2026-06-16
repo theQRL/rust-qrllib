@@ -557,14 +557,14 @@ impl BdsState {
 }
 
 fn shake128(output: &mut [u8], message: &[u8]) {
-    let mut hasher = sha3::Shake128::default();
+    let mut hasher = shake::Shake128::default();
     hasher.update(message);
     let mut reader = hasher.finalize_xof();
     reader.read(output);
 }
 
 fn shake256(output: &mut [u8], message: &[u8]) {
-    let mut hasher = sha3::Shake256::default();
+    let mut hasher = shake::Shake256::default();
     hasher.update(message);
     let mut reader = hasher.finalize_xof();
     reader.read(output);

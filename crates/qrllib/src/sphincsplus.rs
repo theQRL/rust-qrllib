@@ -2,10 +2,8 @@ use crate::{
     error::{QrllibError, Result},
     wallet_type::WalletType,
 };
-use sha3::{
-    Shake256,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use sha3::digest::{ExtendableOutput, Update, XofReader};
+use shake::Shake256;
 use zeroize::{Zeroize, Zeroizing};
 
 pub const SPHINCS_PLUS_256S_N: usize = 32;

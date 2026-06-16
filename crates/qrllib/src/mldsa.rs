@@ -5,10 +5,8 @@ use crate::{
         power2_round, reduce32, use_hint,
     },
 };
-use sha3::{
-    Shake128, Shake256,
-    digest::{ExtendableOutput, Update, XofReader},
-};
+use sha3::digest::{ExtendableOutput, Update, XofReader};
+use shake::{Shake128, Shake256};
 use zeroize::{Zeroize, Zeroizing};
 
 pub const ML_DSA_87_CRYPTO_SEED_SIZE: usize = 32;
