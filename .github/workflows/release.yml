@@ -255,6 +255,14 @@ jobs:
       - name: Build wasm package
         run: wasm-pack build crates/qrllib-wasm --target web --scope theqrl --out-dir pkg
 
+      - name: Set package version to the release version
+        working-directory: crates/qrllib-wasm/pkg
+        env:
+          RELEASES: ${{ needs.release.outputs.releases }}
+        run: |
+          version=$(echo "$RELEASES" | jq -r '.[0].version // (.[0].tag | sub("^[^0-9]*";""))')
+          npm pkg set version="$version"
+
       - name: Publish to npm (trusted publishing + provenance)
         working-directory: crates/qrllib-wasm/pkg
         run: npm publish --access public --provenance
