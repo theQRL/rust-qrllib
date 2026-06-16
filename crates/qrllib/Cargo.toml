@@ -1,6 +1,6 @@
 [package]
 name = "qrllib"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Rust QRL primitives, wallet helpers, and ML-DSA-87 implementation for native and wasm use"
 license.workspace = true

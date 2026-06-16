@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.0...qrllib-v0.1.1) - 2026-06-16
+
+### Other
+
+- dependency updates
+
 ## [0.1.0](https://github.com/theQRL/rust-qrllib/releases/tag/qrllib-v0.1.0) - 2026-06-16
 
 ### Added
