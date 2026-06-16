@@ -19,7 +19,7 @@ rules:
     # one action; the blanket policy keeps everything else hash-pinned.
     config:
       policies:
-        slsa-framework/slsa-github-generator: ref-pin
+        slsa-framework/slsa-github-generator/*: ref-pin
         "*": hash-pin
 
   superfluous-actions:
