@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.2...qrllib-v0.1.3) - 2026-06-17
+
+### Fixed
+
+- cases for npm trusted publishing
+
+### Other
+
+- Merge pull request #22 from jplomas/main
+
 ## [0.1.2](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.1...qrllib-v0.1.2) - 2026-06-17
 
 ### Fixed
