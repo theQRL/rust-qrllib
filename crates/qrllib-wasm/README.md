@@ -17,13 +17,22 @@ npm install @theqrl/qrllib-wasm
 
 ## Usage
 
-This is a `--target web` build, so initialise the module once before calling any
-export:
+This is a `--target web` build: the default export is an `init` function you must
+call once before any other export. How `init` receives the `.wasm` differs by
+environment.
+
+### Node.js
+
+Load the `.wasm` bytes and pass them to `init`:
 
 ```js
 import init, { generate_wallet, sign_message, verify_message } from '@theqrl/qrllib-wasm';
+import { readFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-await init();
+const pkgDir = dirname(fileURLToPath(import.meta.resolve('@theqrl/qrllib-wasm')));
+await init({ module_or_path: await readFile(join(pkgDir, 'qrllib_wasm_bg.wasm')) });
 
 const wallet = generate_wallet();            // { scheme, address, extendedSeedHex, publicKeyHex, descriptorHex, ... }
 const signature = sign_message(wallet.extendedSeedHex, 'hello, post-quantum world');
@@ -33,6 +42,19 @@ const ok = verify_message(
   'hello, post-quantum world',
   signature.signatureHex,
 );
+console.log(ok); // true
+```
+
+### Browser / bundler
+
+With a bundler (Vite, webpack, Rollup) or a native `<script type="module">`, the
+`.wasm` asset is resolved for you, so `init()` takes no argument:
+
+```js
+import init, { generate_wallet } from '@theqrl/qrllib-wasm';
+
+await init();
+const wallet = generate_wallet();
 ```
 
 ## API
