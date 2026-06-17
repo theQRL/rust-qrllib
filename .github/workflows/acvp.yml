@@ -29,16 +29,19 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Clone NIST ACVP-Server (latest)
+      - name: Clone NIST ACVP-Server (ML-DSA vectors)
+        env:
+          ACVP_REF: 15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0 # v1.1.0.42
         run: |
-          git clone --depth 1 --no-checkout --filter=blob:none \
-            https://github.com/usnistgov/ACVP-Server.git /tmp/acvp-server
+          git init /tmp/acvp-server
           cd /tmp/acvp-server
+          git remote add origin https://github.com/usnistgov/ACVP-Server.git
           git sparse-checkout init --cone
           git sparse-checkout set \
             gen-val/json-files/ML-DSA-keyGen-FIPS204 \
             gen-val/json-files/ML-DSA-sigGen-FIPS204
-          git checkout
+          git fetch --depth 1 --filter=blob:none origin "$ACVP_REF"
+          git checkout "$ACVP_REF"
           echo "ACVP-Server commit: $(git rev-parse --short HEAD)"
           echo "ACVP-Server date: $(git log -1 --format=%ci)"
           ls gen-val/json-files/ML-DSA-keyGen-FIPS204/prompt.json
@@ -79,16 +82,19 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Clone NIST ACVP-Server (latest)
+      - name: Clone NIST ACVP-Server (ML-KEM vectors)
+        env:
+          ACVP_REF: 15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0 # v1.1.0.42
         run: |
-          git clone --depth 1 --no-checkout --filter=blob:none \
-            https://github.com/usnistgov/ACVP-Server.git /tmp/acvp-server
+          git init /tmp/acvp-server
           cd /tmp/acvp-server
+          git remote add origin https://github.com/usnistgov/ACVP-Server.git
           git sparse-checkout init --cone
           git sparse-checkout set \
             gen-val/json-files/ML-KEM-keyGen-FIPS203 \
             gen-val/json-files/ML-KEM-encapDecap-FIPS203
-          git checkout
+          git fetch --depth 1 --filter=blob:none origin "$ACVP_REF"
+          git checkout "$ACVP_REF"
           echo "ACVP-Server commit: $(git rev-parse --short HEAD)"
           echo "ACVP-Server date: $(git log -1 --format=%ci)"
           ls gen-val/json-files/ML-KEM-keyGen-FIPS203/prompt.json

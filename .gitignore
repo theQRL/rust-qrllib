@@ -2,6 +2,7 @@
 coverage/
 coverage*.out
 coverage.html
+lcov*.info
 test-*.out
 target/
 demo/node_modules/
