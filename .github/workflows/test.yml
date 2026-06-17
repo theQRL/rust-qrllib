@@ -70,6 +70,12 @@ jobs:
       - name: Generate coverage report
         run: cargo llvm-cov --locked --package qrllib --lcov --output-path lcov.info
 
+      - name: Filter ignored code from coverage
+        uses: jplomas/ignore-cov@8cdab37c9188e4ccd0dde928d19f67bfef07f772 # v1
+        with:
+          file: lcov.info
+          require-reason: 'true'
+
       - name: Upload coverage to Codecov
         if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0

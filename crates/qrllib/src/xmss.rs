@@ -216,6 +216,7 @@ impl Xmss {
         // never fires for any constructible height. Kept to assert BDS-state
         // pre-conditions for auditors reading the function in isolation.
         if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidXmssBdsParams);
         }
 
@@ -242,6 +243,7 @@ impl Xmss {
             &mut sk,
             &mut bds_state,
             seed,
+            //coverage:ignore reason=defensively-unreachable
         )?;
 
         Ok(Self { xmss_params, hash_function, height, seed: seed.to_vec(), sk, bds_state })
@@ -267,7 +269,12 @@ impl Xmss {
         expanded_seed: &[u8; 96],
     ) -> Result<Self> {
         let height_u32 = height.as_u32();
+        // Coverage: `XmssHeight` only admits even heights in [2, XMSS_MAX_HEIGHT]
+        // and XMSS_WOTS_PARAM_K is the compile-time constant 2, so this BDS
+        // pre-condition guard never fires for any constructible height. Mirrors
+        // the same guard in `initialize_tree`.
         if XMSS_WOTS_PARAM_K >= height_u32 || (height_u32 - XMSS_WOTS_PARAM_K) % 2 == 1 {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidXmssBdsParams);
         }
 
@@ -276,6 +283,9 @@ impl Xmss {
         let mut bds_state = BdsState::new(height_u32, XMSS_WOTS_PARAM_N, XMSS_WOTS_PARAM_K);
         let mut pk = vec![0_u8; XMSS_PUBLIC_KEY_SIZE];
         let mut sk = vec![0_u8; XMSS_SECRET_KEY_SIZE];
+        // Coverage: the `?` error-propagation arm is unreachable because every
+        // validated `XmssHeight` / `XmssHashFunction` / expanded-seed combination
+        // produces a successful keypair. Kept to surface internal invariants.
         xmss_fast_gen_key_pair_from_expanded_seed(
             hash_function,
             &xmss_params,
@@ -283,6 +293,7 @@ impl Xmss {
             &mut sk,
             &mut bds_state,
             expanded_seed,
+            //coverage:ignore reason=defensively-unreachable
         )?;
 
         // The struct's `seed` field stores the 96-byte expanded seed
@@ -453,6 +464,7 @@ pub fn verify_xmss_with_custom_wots_param_w(
     // {4, 16, 256}, but the preceding `matches!` guard already rejects those.
     // Kept as defence-in-depth if the two guards ever drift apart.
     let Ok(wots_params) = WotsParams::new(XMSS_WOTS_PARAM_N, wots_param_w) else {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     };
     let signature_base_size = calculate_signature_base_size(wots_params.key_size);
@@ -472,6 +484,7 @@ pub fn verify_xmss_with_custom_wots_param_w(
     // reference implementation; adding callers from other entry points could
     // reach it.
     let Ok(height) = get_xmss_height_from_sig_size(sig_size, wots_param_w) else {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     };
     let height_u32 = height.as_u32();
@@ -484,6 +497,7 @@ pub fn verify_xmss_with_custom_wots_param_w(
     let Ok(params) =
         XmssParams::new(XMSS_WOTS_PARAM_N, height_u32, wots_param_w, XMSS_WOTS_PARAM_K)
     else {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     };
 
@@ -1209,6 +1223,7 @@ fn xmss_fast_update(
         // internal-invariant assertion — if BDS bookkeeping ever drifts, we
         // surface it as an error rather than indexing out of bounds.
         if index >= num_elements {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::XmssInternal);
         }
         bds_round(
@@ -1660,6 +1675,7 @@ fn verify_sig(
     // caller selected one from `XmssHashFunction` — all three variants are
     // supported. Kept as defence-in-depth.
     if h_msg(hash_function, &mut message_hash, message, &hash_key, n as u32).is_err() {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     }
 

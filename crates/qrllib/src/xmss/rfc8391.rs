@@ -302,6 +302,41 @@ mod tests {
     }
 
     #[test]
+    fn height_and_hash_function_match_each_parameter_set() {
+        use crate::xmss::{XmssHashFunction, XmssHeight};
+
+        let h10 = XmssHeight::new(10).expect("height 10");
+        let h16 = XmssHeight::new(16).expect("height 16");
+        let h20 = XmssHeight::new(20).expect("height 20");
+
+        // Heights: 10/16/20 across both hash families.
+        assert_eq!(ParameterSet::XmssSha2_10_256.height(), h10);
+        assert_eq!(ParameterSet::XmssSha2_16_256.height(), h16);
+        assert_eq!(ParameterSet::XmssSha2_20_256.height(), h20);
+        assert_eq!(ParameterSet::XmssShake_10_256.height(), h10);
+        assert_eq!(ParameterSet::XmssShake_16_256.height(), h16);
+        assert_eq!(ParameterSet::XmssShake_20_256.height(), h20);
+
+        // Hash functions: SHA2 family vs SHAKE family.
+        assert_eq!(ParameterSet::XmssSha2_10_256.hash_function(), XmssHashFunction::Sha2_256);
+        assert_eq!(ParameterSet::XmssSha2_16_256.hash_function(), XmssHashFunction::Sha2_256);
+        assert_eq!(ParameterSet::XmssSha2_20_256.hash_function(), XmssHashFunction::Sha2_256);
+        assert_eq!(ParameterSet::XmssShake_10_256.hash_function(), XmssHashFunction::Shake256);
+        assert_eq!(ParameterSet::XmssShake_16_256.hash_function(), XmssHashFunction::Shake256);
+        assert_eq!(ParameterSet::XmssShake_20_256.hash_function(), XmssHashFunction::Shake256);
+    }
+
+    #[test]
+    fn verify_rejects_public_key_with_unsupported_oid() {
+        // A public key whose OID prefix is not one of the supported set makes
+        // `unmarshal_public_key` fail, exercising the `Err(_) => false` arm in
+        // `verify`. OID 0x00000004 is an XMSS-SHA2_h_512 (n=64) set, out of scope.
+        let mut rfc_pk = [0_u8; RFC_PUBLIC_KEY_SIZE];
+        rfc_pk[..OID_LEN].copy_from_slice(&0x00000004_u32.to_be_bytes());
+        assert!(!verify(ParameterSet::XmssSha2_10_256, b"msg", b"sig", &rfc_pk));
+    }
+
+    #[test]
     fn distinct_seeds_produce_distinct_roots() {
         let mut seed_a = ascending_expanded_seed();
         seed_a[0] ^= 0x01;

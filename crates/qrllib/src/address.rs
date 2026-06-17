@@ -160,7 +160,12 @@ pub fn is_valid_checksum_address(address: &str) -> bool {
     if address.len() != 1 + HEX_LEN {
         return false;
     }
+    // Coverage: `split_at_checked(1)` only returns `None` for an empty string,
+    // but the length check above already guarantees `address.len() == 1 + HEX_LEN`,
+    // so the `else` arm is dead. Kept so a future length-guard change can't turn
+    // the slice into a panic.
     let Some((prefix, body)) = address.split_at_checked(1) else {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     };
     if prefix != "Q" {
@@ -344,6 +349,23 @@ mod tests {
         let digit_only: String = format!("Q{}{}", "0123456789".repeat(12), "01234567",);
         assert_eq!(digit_only.len(), 1 + ADDRESS_SIZE * 2);
         assert!(is_valid_checksum_address(&digit_only));
+    }
+
+    #[test]
+    fn is_valid_checksum_address_rejects_wrong_length() {
+        // One character short of the canonical 1 + HEX_LEN length.
+        let short = format!("Q{}", "0".repeat(ADDRESS_SIZE * 2 - 1));
+        assert_eq!(short.len(), ADDRESS_SIZE * 2);
+        assert!(!is_valid_checksum_address(&short));
+    }
+
+    #[test]
+    fn is_valid_checksum_address_rejects_non_hex_body() {
+        // Correct length and `Q` prefix, but the body contains a non-hex
+        // character ('z'), so the hexdigit guard must reject it.
+        let non_hex = format!("Q{}", "z".repeat(ADDRESS_SIZE * 2));
+        assert_eq!(non_hex.len(), 1 + ADDRESS_SIZE * 2);
+        assert!(!is_valid_checksum_address(&non_hex));
     }
 
     #[test]

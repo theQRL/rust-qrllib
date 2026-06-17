@@ -1,0 +1,8 @@
+# Allowed reasons for `//coverage:ignore reason=...` directives, enforced by
+# ignore-cov --require-reason. These mirror the two categories the coding
+# playbook (§4.4) accepts for excluding lines from the 100% coverage gate.
+reasons:
+  - name: statistically-unreachable
+    description: "Rejection-sampling / probabilistic refill paths with no deterministic trigger; exercised by long fuzz campaigns rather than example-based tests."
+  - name: defensively-unreachable
+    description: "Code unreachable by construction (single-variant matches, validated-input `?` error branches, parameter/BDS pre-condition asserts) or OS-RNG-failure cleanup; retained as defence-in-depth."

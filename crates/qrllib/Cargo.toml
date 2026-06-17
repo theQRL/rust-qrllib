@@ -44,6 +44,3 @@ getrandom = { workspace = true, features = ["js"] }
 # In-crate tests get the issuable behaviour automatically via
 # `cfg(any(test, feature = "experimental-sphincsplus-issuance"))`.
 experimental-sphincsplus-issuance = []
-
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(coverage_nightly)'] }
