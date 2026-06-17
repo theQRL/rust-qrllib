@@ -151,9 +151,11 @@ pub fn get_xmss_address_from_pk(
     // parse time. Kept as a forward-compatibility checkpoint so that adding a
     // new variant forces explicit handling here.
     if descriptor.addr_format_type() != LegacyAddrFormatType::Sha2562x {
+        //coverage:ignore start reason=defensively-unreachable
         return Err(QrllibError::UnsupportedLegacyAddressFormat(
             descriptor.addr_format_type() as u8
         ));
+        //coverage:ignore end
     }
 
     let mut address = [0_u8; LEGACY_XMSS_ADDRESS_SIZE];
@@ -175,6 +177,7 @@ pub fn is_valid_xmss_address(address: [u8; LEGACY_XMSS_ADDRESS_SIZE]) -> bool {
     };
     // Coverage: see `get_xmss_address_from_pk` — single-variant forward-compat guard.
     if descriptor.addr_format_type() != LegacyAddrFormatType::Sha2562x {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     }
 
@@ -194,6 +197,7 @@ impl LegacyXmssWallet {
         // `value <= XMSS_MAX_HEIGHT`. Kept as a defence-in-depth guard against
         // a future constructor that might skip the check.
         if height.as_u8() > XMSS_MAX_HEIGHT {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidXmssHeight(height.as_u8()));
         }
 
@@ -313,6 +317,7 @@ pub fn verify_legacy_xmss(
     // variant (`Xmss`); `TryFrom<u8>` already rejects any other byte at parse
     // time. Kept as a forward-compatibility checkpoint.
     if descriptor.signature_type() != LegacyWalletType::Xmss {
+        //coverage:ignore reason=defensively-unreachable
         return false;
     }
     if descriptor.height() != height {

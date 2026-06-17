@@ -130,3 +130,31 @@ impl core::fmt::Display for WalletType {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::WalletType;
+
+    #[test]
+    fn mldsa87_is_always_issuable() {
+        // ML-DSA-87 is the primary recommended QRL v2 algorithm (FIPS 204)
+        // and is issuable regardless of the SPHINCS+ experimental gate.
+        assert!(WalletType::MlDsa87.is_issuable());
+    }
+
+    #[test]
+    fn sphincsplus_is_issuable_in_crate_test_build() {
+        // Exercises the `SphincsPlus256s` arm of `is_issuable`: the
+        // `cfg!(any(test, feature = ...))` probe is `true` in an in-crate test
+        // build, so issuance is permitted here even without the Cargo feature.
+        assert!(WalletType::SphincsPlus256s.is_issuable());
+    }
+
+    #[test]
+    fn both_wallet_types_are_verifiable() {
+        // Existing addresses must remain verifiable for both wallet types
+        // regardless of the issuance gate (TOB-QRLLIB-4).
+        assert!(WalletType::MlDsa87.is_verifiable());
+        assert!(WalletType::SphincsPlus256s.is_verifiable());
+    }
+}

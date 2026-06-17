@@ -1085,6 +1085,18 @@ mod tests {
     }
 
     #[test]
+    fn generated_decapsulation_key_round_trips() {
+        // Exercises the system-randomness `generate()` path (as opposed to the
+        // deterministic `from_seed`): the resulting keypair must complete a full
+        // encapsulate -> decapsulate round-trip with matching shared secrets.
+        let dk = DecapsulationKey::generate().expect("generated decap key");
+        let ek = dk.encapsulation_key();
+        let (shared_a, ciphertext) = ek.encapsulate().expect("encapsulate");
+        let shared_b = dk.decapsulate(&ciphertext).expect("decapsulate");
+        assert_eq!(*shared_a, *shared_b);
+    }
+
+    #[test]
     fn encapsulation_key_round_trips_through_bytes() {
         let dk = DecapsulationKey::from_seed(&seed(7)).expect("decap key");
         let ek = dk.encapsulation_key();
@@ -1312,7 +1324,11 @@ mod acvp {
     /// the predicate the `decapsulationKeyCheck` function asserts.
     fn from_expanded(b: &[u8]) -> Result<DecapsulationKey> {
         const EXPANDED: usize = K * ENCODING_SIZE_12 + MLKEM1024_ENCAPSULATION_KEY_SIZE + 64;
+        // Coverage: every ACVP `decapsulationKeyCheck` vector is exactly EXPANDED
+        // bytes, so this outer length guard never trips; the check vectors instead
+        // exercise the content-validation branches below.
         if b.len() != EXPANDED {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidMlKemEncoding);
         }
         let mut s = [new_ring(); K];
@@ -1342,9 +1358,14 @@ mod acvp {
 
     #[test]
     fn acvp_keygen_matches_nist_vectors() {
+        // Coverage: the coverage run always sets MLKEM_ACVP_VECTORS_DIR, so the
+        // skip arm (for environments without the vendored NIST vectors) is never
+        // taken here.
         let Some(dir) = vectors_dir() else {
+            //coverage:ignore start reason=defensively-unreachable
             eprintln!("MLKEM_ACVP_VECTORS_DIR not set; skipping ML-KEM ACVP keyGen test");
             return;
+            //coverage:ignore end
         };
         let suite = "ML-KEM-keyGen-FIPS203";
         let prompt: PromptFile = load(&dir, suite, "prompt.json");
@@ -1382,9 +1403,14 @@ mod acvp {
 
     #[test]
     fn acvp_encap_decap_matches_nist_vectors() {
+        // Coverage: the coverage run always sets MLKEM_ACVP_VECTORS_DIR, so the
+        // skip arm (for environments without the vendored NIST vectors) is never
+        // taken here.
         let Some(dir) = vectors_dir() else {
+            //coverage:ignore start reason=defensively-unreachable
             eprintln!("MLKEM_ACVP_VECTORS_DIR not set; skipping ML-KEM ACVP encapDecap test");
             return;
+            //coverage:ignore end
         };
         let suite = "ML-KEM-encapDecap-FIPS203";
         let prompt: PromptFile = load(&dir, suite, "prompt.json");
@@ -1423,6 +1449,10 @@ mod acvp {
                         assert_eq!(ok, want.test_passed, "tc{}: ek check", test.tc_id);
                         encap_check += 1;
                     }
+                    // Coverage: the NIST ML-KEM-1024 encapDecap suite only contains
+                    // the four functions matched above; this guard fires solely if
+                    // a future vector set introduces a new function tag.
+                    //coverage:ignore reason=defensively-unreachable
                     other => panic!("unexpected ACVP function {other:?}"),
                 }
             }

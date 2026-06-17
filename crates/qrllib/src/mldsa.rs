@@ -359,7 +359,7 @@ fn shake256_many(output: &mut [u8], inputs: &[&[u8]]) {
 // Defensive length guard never fires when called from ML-DSA internals
 // (both operands are compile-time-sized arrays). Semantics verified via
 // higher-level signature-verify tests that exercise equal / mismatched bytes.
-#[cfg_attr(coverage_nightly, coverage(off))]
+//coverage:ignore start reason=defensively-unreachable
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
@@ -372,6 +372,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
 
     diff == 0
 }
+//coverage:ignore end
 
 fn context_prefix(context: &[u8]) -> Result<Vec<u8>> {
     if context.len() > 255 {
@@ -477,7 +478,7 @@ fn poly_use_hint(out: &mut Poly, input: &Poly, hints: &Poly) {
 // within the reference-implementation range) but kept for parity with the
 // upstream C / Go implementations. Norm-check semantics are measured
 // indirectly via sign/verify round-trip tests.
-#[cfg_attr(coverage_nightly, coverage(off))]
+//coverage:ignore start reason=defensively-unreachable
 fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
     if bound > (Q - 1) / 8 {
         return 1;
@@ -495,6 +496,7 @@ fn poly_chk_norm(poly: &Poly, bound: i32) -> i32 {
 
     ((violation as u32) >> 31) as i32
 }
+//coverage:ignore end
 
 fn poly_uniform(poly: &mut Poly, seed: &[u8; ML_DSA_87_CRYPTO_SEED_SIZE], nonce: u16) {
     let mut buffer = [0_u8; POLY_UNIFORM_N_BLOCKS * STREAM128_BLOCK_BYTES + 2];
@@ -511,6 +513,7 @@ fn poly_uniform(poly: &mut Poly, seed: &[u8; ML_DSA_87_CRYPTO_SEED_SIZE], nonce:
     // fills every slot for the seeds our tests generate. Kept for correctness
     // under pathological Shake128 outputs; measured indirectly by ACVP fixtures
     // that exercise the same rejection-sampling code paths.
+    //coverage:ignore start reason=statistically-unreachable
     while ctr < N {
         let off = buffer_len % 3;
         buffer.copy_within(buffer_len - off..buffer_len, 0);
@@ -518,6 +521,7 @@ fn poly_uniform(poly: &mut Poly, seed: &[u8; ML_DSA_87_CRYPTO_SEED_SIZE], nonce:
         buffer_len = STREAM128_BLOCK_BYTES + off;
         ctr += rej_uniform(&mut poly.coeffs[ctr..], &buffer[..buffer_len]);
     }
+    //coverage:ignore end
 }
 
 fn rej_uniform(coefficients: &mut [i32], buffer: &[u8]) -> usize {
@@ -609,10 +613,12 @@ fn poly_challenge(challenge: &mut Poly, seed: &[u8; C_TILDE_BYTES]) {
     // sampling for TAU challenge coefficients. Test seeds do not trigger it.
     for index in (N - TAU)..N {
         let selected = loop {
+            //coverage:ignore start reason=statistically-unreachable
             if pos >= SHAKE256_RATE {
                 reader.read(&mut buffer);
                 pos = 0;
             }
+            //coverage:ignore end
 
             let byte = usize::from(buffer[pos]);
             pos += 1;
@@ -1291,6 +1297,7 @@ fn crypto_sign_signature(
             poly_vec_k_inv_ntt_to_mont(&mut hints);
             poly_vec_k_reduce(&mut hints);
             if poly_vec_k_chk_norm(&hints, GAMMA2) != 0 {
+                //coverage:ignore reason=statistically-unreachable
                 continue;
             }
 
@@ -1304,6 +1311,7 @@ fn crypto_sign_signature(
             pack_sig(signature, &challenge, &z, &hints);
             return Ok(());
         }
+        //coverage:ignore reason=statistically-unreachable
         Err(QrllibError::RejectionBudgetExceeded(REJECTION_BUDGET))
     })();
 
@@ -1399,7 +1407,7 @@ fn crypto_sign_verify_mldsa(
 // Thin shim over `crypto_sign_verify_mldsa`; its defensive length guard is
 // duplicated from the public `open` wrapper and can never fire from there.
 // Verification semantics are measured via `verify_bytes` / wallet tests.
-#[cfg_attr(coverage_nightly, coverage(off))]
+//coverage:ignore start reason=defensively-unreachable
 fn crypto_sign_open_mldsa(
     signed_message: &[u8],
     context: &[u8],
@@ -1419,6 +1427,7 @@ fn crypto_sign_open_mldsa(
         Ok(None)
     }
 }
+//coverage:ignore end
 
 #[cfg(test)]
 mod tests {

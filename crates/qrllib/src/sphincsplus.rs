@@ -731,9 +731,11 @@ fn crypto_sign_signature(
         // Coverage: the RNG-failure arm is unreachable in tests — `getrandom`
         // only errors on OS-level RNG exhaustion. Kept so that catastrophic
         // RNG failures zeroize the secret-key material before propagating.
+        //coverage:ignore start reason=defensively-unreachable
         ctx.sk_seed.zeroize();
         opt_rand.zeroize();
         return Err(error);
+        //coverage:ignore end
     }
     gen_message_random(&mut sig[..SPHINCS_PLUS_256S_N], sk_prf, &opt_rand, message);
     hash_message(
@@ -802,7 +804,7 @@ fn crypto_sign(
 // Defensive length guard never fires when called from SPHINCS+ internals
 // (both operands are compile-time-sized arrays). Semantics verified via
 // higher-level signature-verify tests that exercise equal / mismatched bytes.
-#[cfg_attr(coverage_nightly, coverage(off))]
+//coverage:ignore start reason=defensively-unreachable
 fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     if left.len() != right.len() {
         return false;
@@ -813,6 +815,7 @@ fn constant_time_eq(left: &[u8], right: &[u8]) -> bool {
     }
     diff == 0
 }
+//coverage:ignore end
 
 fn crypto_sign_verify(signature: &[u8], message: &[u8], public_key: &[u8]) -> bool {
     if signature.len() != SPHINCS_PLUS_256S_SIGNATURE_SIZE
@@ -895,7 +898,7 @@ fn crypto_sign_verify(signature: &[u8], message: &[u8], public_key: &[u8]) -> bo
 // Thin shim over `crypto_sign_verify`; its defensive length guard is duplicated
 // from the public `sphincsplus_open` wrapper and can never fire from there.
 // Verification semantics are measured via `verify_sphincsplus_signature` tests.
-#[cfg_attr(coverage_nightly, coverage(off))]
+//coverage:ignore start reason=defensively-unreachable
 fn crypto_sign_open(message: &mut [u8], signature_message: &[u8], public_key: &[u8]) -> bool {
     if signature_message.len() < SPHINCS_PLUS_256S_SIGNATURE_SIZE {
         return false;
@@ -910,6 +913,7 @@ fn crypto_sign_open(message: &mut [u8], signature_message: &[u8], public_key: &[
     message.copy_from_slice(&signature_message[SPHINCS_PLUS_256S_SIGNATURE_SIZE..]);
     true
 }
+//coverage:ignore end
 
 impl SphincsPlus256s {
     pub fn generate() -> Result<Self> {

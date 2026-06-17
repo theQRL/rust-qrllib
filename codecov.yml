@@ -1,0 +1,14 @@
+# Coverage gates at 100% of *testable* code. Genuinely untestable lines are
+# marked `//coverage:ignore reason=...` and stripped from the lcov report before
+# upload (via jplomas/ignore-cov), so the 100% ceiling is reachable and any
+# regression is unmissable. Mirrors go-qrllib.
+coverage:
+  status:
+    project:
+      default:
+        target: 100%
+        threshold: 0%
+    patch:
+      default:
+        target: 100%
+        threshold: 0%

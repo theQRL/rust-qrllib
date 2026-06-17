@@ -80,7 +80,13 @@ impl SphincsPlus256sWallet {
     /// remain unrestricted; this gate applies only to *new wallet
     /// creation* at the wallet layer.
     fn assert_issuable() -> Result<()> {
+        // Coverage: in an in-crate test build `WalletType::SphincsPlus256s
+        // .is_issuable()` is hard-wired `true` via `cfg!(any(test, ...))`, so the
+        // negated guard can never fire here; the `WalletTypeNotIssuable` error is
+        // reachable only from downstream (production) builds without the
+        // `experimental-sphincsplus-issuance` feature.
         if !WalletType::SphincsPlus256s.is_issuable() {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::WalletTypeNotIssuable(WalletType::SphincsPlus256s));
         }
         Ok(())
