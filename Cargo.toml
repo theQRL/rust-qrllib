@@ -8,7 +8,7 @@ resolver = "2"
 [workspace.package]
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/theqrl/rust-qrllib"
+repository = "https://github.com/theQRL/rust-qrllib"
 
 [workspace.dependencies]
 getrandom = "=0.2.17"

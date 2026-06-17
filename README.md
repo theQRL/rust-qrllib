@@ -2,7 +2,7 @@
 
 Rust implementation of the Quantum Resistant Ledger cryptographic library, with native Rust APIs and wasm-bindgen bindings for browser use.
 
-[![codecov](https://codecov.io/gh/theqrl/rust-qrllib/branch/main/graph/badge.svg)](https://codecov.io/gh/theqrl/rust-qrllib)
+[![codecov](https://codecov.io/gh/theQRL/rust-qrllib/branch/main/graph/badge.svg)](https://codecov.io/gh/theQRL/rust-qrllib)
 
 ## Overview
 
