@@ -251,7 +251,10 @@ mod tests {
             MlDsa87Wallet::from_seed(Seed::from_bytes(&[9_u8; crate::SEED_SIZE]).expect("seed"))
                 .expect("wallet");
         let checksummed = wallet.checksum_address_string();
-        assert!(checksummed.starts_with('Q'), "checksummed address must keep the uppercase Q prefix");
+        assert!(
+            checksummed.starts_with('Q'),
+            "checksummed address must keep the uppercase Q prefix"
+        );
         assert_eq!(checksummed.len(), wallet.address_string().len());
     }
 }
