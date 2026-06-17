@@ -84,7 +84,7 @@ Controlled by the `publish` flag for the `qrllib` package in `release-plz.toml`
 
 **One-time setup (no secret to store):** on crates.io, open the `qrllib` crate →
 **Settings → Trusted Publishing** (GitHub Actions) and set repository
-`theqrl/rust-qrllib`, workflow `release.yml`, and environment `crates-publish`
+`theQRL/rust-qrllib`, workflow `release.yml`, and environment `crates-publish`
 (it must match the `environment:` on the `release` job). Until that's configured
 the auth step can't mint a token and the publish step fails. (The inaugural `0.1.0` was
 published manually, before this was wired up.)
@@ -115,7 +115,7 @@ matches the `qrllib-vX.Y.Z` release.
 1. Create a GitHub environment named **`npm-publish`** (Settings → Environments) —
    the `publish-wasm` job runs in it, and trusted publishing is scoped to it.
 2. On npmjs.com, open the `@theqrl/qrllib-wasm` package → **Settings → Trusted
-   Publisher** (GitHub Actions) and set: repository `theqrl/rust-qrllib`, workflow
+   Publisher** (GitHub Actions) and set: repository `theQRL/rust-qrllib`, workflow
    `release.yml`, environment `npm-publish`.
 
 To publish by hand instead, run the two commands above locally after `npm login`
@@ -128,7 +128,7 @@ Verify the SLSA provenance of a release asset:
 ```bash
 slsa-verifier verify-artifact \
   --provenance-path provenance.intoto.jsonl \
-  --source-uri github.com/theqrl/rust-qrllib \
+  --source-uri github.com/theQRL/rust-qrllib \
   <release-asset>
 ```
 

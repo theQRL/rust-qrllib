@@ -72,7 +72,7 @@ The implementations are checked for byte-level correctness against:
 ## Security
 
 This crate handles cryptographic key material. See
-[`SECURITY.md`](https://github.com/theqrl/rust-qrllib/blob/main/SECURITY.md)
+[`SECURITY.md`](https://github.com/theQRL/rust-qrllib/blob/main/SECURITY.md)
 in the repository for the security policy, standards-alignment notes, and how to
 report vulnerabilities.
 

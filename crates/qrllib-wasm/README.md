@@ -1,12 +1,12 @@
 # @theqrl/qrllib-wasm
 
 [![npm](https://img.shields.io/npm/v/@theqrl/qrllib-wasm.svg)](https://www.npmjs.com/package/@theqrl/qrllib-wasm)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/theqrl/rust-qrllib/blob/main/LICENSE)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](https://github.com/theQRL/rust-qrllib/blob/main/LICENSE)
 
 WebAssembly bindings for [QRL](https://www.theqrl.org/) (Quantum Resistant
 Ledger) post-quantum cryptography — ML-DSA-87 (FIPS 204), SPHINCS+-256s, and
 XMSS wallets, plus QRL address/signature helpers. Compiled with `wasm-pack`
-(`--target web`) from [`theqrl/rust-qrllib`](https://github.com/theqrl/rust-qrllib);
+(`--target web`) from [`theQRL/rust-qrllib`](https://github.com/theQRL/rust-qrllib);
 the version tracks the `qrllib` crate.
 
 ## Install
@@ -48,8 +48,8 @@ Handle-based helpers (return a numeric wallet handle): `create_mldsa_wallet` /
 > **SPHINCS+ note:** creating *new* SPHINCS+ wallets is disabled by default
 > (pre-FIPS-205 parameter set, TOB-QRLLIB-4); verifying existing SPHINCS+
 > signatures is always available. See the
-> [repository](https://github.com/theqrl/rust-qrllib) for details.
+> [repository](https://github.com/theQRL/rust-qrllib) for details.
 
 ## License
 
-[MIT](https://github.com/theqrl/rust-qrllib/blob/main/LICENSE)
+[MIT](https://github.com/theQRL/rust-qrllib/blob/main/LICENSE)

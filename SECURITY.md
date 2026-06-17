@@ -130,7 +130,7 @@ gh attestation verify sbom-spdx.json --owner theQRL
 Verify checksums:
 
 ```bash
-curl -LO https://github.com/theqrl/rust-qrllib/releases/download/vX.Y.Z/checksums-sha256.txt
+curl -LO https://github.com/theQRL/rust-qrllib/releases/download/vX.Y.Z/checksums-sha256.txt
 sha256sum -c checksums-sha256.txt
 ```
 
@@ -138,10 +138,10 @@ Verify SLSA provenance:
 
 ```bash
 # Install slsa-verifier from https://github.com/slsa-framework/slsa-verifier
-curl -LO https://github.com/theqrl/rust-qrllib/releases/download/vX.Y.Z/provenance.intoto.jsonl
+curl -LO https://github.com/theQRL/rust-qrllib/releases/download/vX.Y.Z/provenance.intoto.jsonl
 slsa-verifier verify-artifact Cargo.toml \
   --provenance-path provenance.intoto.jsonl \
-  --source-uri github.com/theqrl/rust-qrllib
+  --source-uri github.com/theQRL/rust-qrllib
 ```
 
 Release artifacts:
