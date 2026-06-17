@@ -5,6 +5,7 @@ edition = "2024"
 description = "wasm-bindgen wrappers around the Rust QRL library for browser demos"
 license.workspace = true
 repository.workspace = true
+readme = "README.md"
 publish = false
 
 [dependencies]
