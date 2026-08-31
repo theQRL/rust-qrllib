@@ -79,7 +79,11 @@ impl MlDsa87Wallet {
 
     pub fn from_extended_seed(extended_seed: ExtendedSeed) -> Result<Self> {
         let descriptor = extended_seed.descriptor();
+        // Defence in depth: `wallet_type()` only ever yields `MlDsa87` today —
+        // every other code, SPHINCS+ included, errors on the `?` above — so
+        // this arm is dead until `WalletType` gains a second valid variant.
         if descriptor.wallet_type()? != WalletType::MlDsa87 {
+            //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::InvalidDescriptor);
         }
         Self::from_seed(extended_seed.seed())

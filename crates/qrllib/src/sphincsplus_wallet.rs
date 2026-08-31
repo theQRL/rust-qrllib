@@ -71,19 +71,14 @@ fn experimental() -> bool {
 /// Whether new SPHINCS+-256s wallets may be constructed today: the
 /// type-level gate, or the experimental opt-in. Parity with Go's
 /// `wallet/sphincsplus_256s.issuable`.
-///
-/// Gate first, opt-in second, so both operands are evaluated:
-/// `experimental()` is always true wherever this is reachable, so the other
-/// order would leave the gate untested.
 fn issuable() -> bool {
-    WalletType::SphincsPlus256s.is_issuable() || experimental()
+    experimental() || WalletType::SphincsPlus256s.is_issuable()
 }
 
 /// Whether SPHINCS+-256s signatures may be verified today. Verification-side
-/// mirror of [`issuable`], including the operand order, and of Go's
-/// `wallet/sphincsplus_256s.verifiable`.
+/// mirror of [`issuable`], and of Go's `wallet/sphincsplus_256s.verifiable`.
 fn verifiable() -> bool {
-    WalletType::SphincsPlus256s.is_verifiable() || experimental()
+    experimental() || WalletType::SphincsPlus256s.is_verifiable()
 }
 
 /// Package-local descriptor validity for the experimental SPHINCS+ path.
