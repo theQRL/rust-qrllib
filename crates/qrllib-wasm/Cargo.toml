@@ -18,8 +18,9 @@ wasm-bindgen.workspace = true
 [features]
 # Mirror of `qrllib`'s `experimental-sphincsplus-issuance` (TOB-QRLLIB-4).
 # Disabled by default — SPHINCS+ wallet creation through the wasm
-# bindings will return `WalletTypeNotIssuable` to the JS caller until
-# QRL adopts a specific SLH-DSA parameter set under FIPS 205.
+# bindings will return `WalletTypeNotIssuable` to the JS caller, and
+# `verify_sphincsplus_message` will return `false`, until QRL adopts a
+# specific SLH-DSA parameter set under FIPS 205.
 # Enable locally for development / demo builds where SPHINCS+ wallet
 # generation is needed:
 #

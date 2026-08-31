@@ -16,7 +16,7 @@ both native and WebAssembly targets.
 | ML-DSA-87 | FIPS 204 | Signature | [`MlDsa87`] |
 | ML-KEM-1024 | FIPS 203 | KEM | [`DecapsulationKey`] / [`EncapsulationKey`] |
 | SPHINCS+-256s | pre-FIPS-205 submission | Signature | [`SphincsPlus256s`] |
-| XMSS (SHA2_10_256) | RFC 8391 | Stateful signature | [`Xmss`] |
+| XMSS | Predates RFC 8391; **not** a standards-tracking implementation. Signatures are wire-compatible with the RFC 8391 reference only where the parameter sets overlap (`Sha2_256` / `Shake256`, via the `xmss::rfc8391` adapter); `Shake128` is a QRL-specific pre-standardisation variant with no RFC counterpart. Does not track NIST SP 800-208. | Stateful signature | [`Xmss`] |
 | Legacy XMSS | QRL v1 | Migration shim | [`LegacyXmssWallet`] |
 
 Plus QRL wallet, address, descriptor, mnemonic, and seed helpers
@@ -32,19 +32,19 @@ qrllib = "0.1"
 Sign and verify with ML-DSA-87:
 
 ```rust
-use qrllib::{ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, mldsa::verify_bytes};
+use qrllib::{MlDsa87, mldsa::verify_bytes};
 
-// Use a CSPRNG to fill the seed in production code.
-let seed = [0u8; ML_DSA_87_CRYPTO_SEED_SIZE];
+fn main() -> Result<(), qrllib::QrllibError> {
+    let signer = MlDsa87::generate()?;
+    let public_key = signer.public_key_bytes();
 
-let signer = MlDsa87::from_seed(seed);
-let public_key = signer.public_key_bytes();
+    let context = b"my-app-v1";
+    let message = b"hello, post-quantum world";
+    let signature = signer.sign(context, message)?;
 
-let context = b"my-app-v1";
-let message = b"hello, post-quantum world";
-let signature = signer.sign(context, message).expect("signing");
-
-assert!(verify_bytes(context, message, &signature, &public_key).expect("verifying"));
+    assert!(verify_bytes(context, message, &signature, &public_key)?);
+    Ok(())
+}
 ```
 
 See the [API docs](https://docs.rs/qrllib) for the wallet-level API
@@ -53,12 +53,14 @@ See the [API docs](https://docs.rs/qrllib) for the wallet-level API
 ## Feature flags
 
 - **`experimental-sphincsplus-issuance`** *(off by default)* — gates the
-  creation of new SPHINCS+ wallets. The implementation is the pre-FIPS-205
-  SPHINCS+ submission; QRL has not yet committed to a specific SLH-DSA
-  parameter set under FIPS 205, so issuing wallets is disabled by default to
-  avoid locking users to a parameter set that may change. **Verification of
-  existing SPHINCS+ signatures is always available** — only wallet creation is
-  gated.
+  SPHINCS+ **wallet path**, both creation and verification. The implementation
+  is the pre-FIPS-205 SPHINCS+ submission; QRL has not yet committed to a
+  specific SLH-DSA parameter set under FIPS 205, so the path is disabled by
+  default to avoid locking users to a parameter set that may change. No
+  SPHINCS+ signatures exist on QRL networks, so `verify_sphincsplus_wallet_signature`
+  returns `false` without this feature, matching go-qrllib. The **raw
+  `SphincsPlus256s` primitive** (`sign` / `verify_sphincsplus_signature`,
+  outside the wallet layer) stays unrestricted.
 
 ## Validation
 
@@ -76,6 +78,10 @@ This crate handles cryptographic key material. See
 in the repository for the security policy, standards-alignment notes, and how to
 report vulnerabilities.
 
+> **XMSS is stateful.** Persist the advanced index before using a signature and
+> never allow two processes or restored copies to sign from the same index.
+> Prefer ML-DSA-87 for new applications.
+
 ## License
 
-Licensed under the [MIT License](LICENSE).
+Licensed under the [MIT License](https://github.com/theQRL/rust-qrllib/blob/main/LICENSE).

@@ -3,10 +3,11 @@
 //!
 //! # What this module is for
 //!
-//! QRL's [crate::xmss] implementation is signature-format compliant
-//! with RFC 8391 (August 2018) for the XMSS-SHA2_h_256 and
-//! XMSS-SHAKE_256_h_256 parameter sets — signatures it produces verify
-//! correctly under the reference implementation at
+//! QRL deployed its [crate::xmss] construction before RFC 8391 was
+//! published in May 2018. For the overlapping XMSS-SHA2_h_256 and
+//! XMSS-SHAKE_256_h_256 parameter families, the later RFC specified
+//! a closely aligned signature construction and byte layout: signatures
+//! produced here verify correctly under the reference implementation at
 //! <https://github.com/XMSS/xmss-reference>. The cross-implementation
 //! verification CI in `.github/workflows/cross-verify.yml` confirms
 //! this in the forward direction (rust-qrllib → reference).
@@ -27,10 +28,11 @@
 //!
 //! This module addresses both:
 //!
-//!   - [`new_keypair`] takes 96 bytes directly via
+//!   - [`crate::xmss::rfc8391::new_keypair`] takes 96 bytes directly via
 //!     [`crate::xmss::Xmss::initialize_tree_from_expanded_seed`],
 //!     matching the reference implementation's keypair derivation.
-//!   - [`marshal_public_key`] / [`unmarshal_public_key`] convert
+//!   - [`crate::xmss::rfc8391::marshal_public_key`] /
+//!     [`crate::xmss::rfc8391::unmarshal_public_key`] convert
 //!     between QRL's internal representation and the RFC byte layout.
 //!
 //! Together they make cross-implementation interop bidirectional for
@@ -52,7 +54,8 @@
 //!
 //! The remaining six OIDs from RFC 8391 are `n=64` parameter sets
 //! (XMSS-{SHA2,SHAKE}_h_512); they are out of scope for QRL and not
-//! implemented. Calling [`new_keypair`] / [`unmarshal_public_key`]
+//! implemented. Calling [`crate::xmss::rfc8391::new_keypair`] /
+//! [`crate::xmss::rfc8391::unmarshal_public_key`]
 //! with one of those OIDs returns
 //! [`crate::error::QrllibError::UnsupportedXmssParameterSet`].
 //!
@@ -63,12 +66,13 @@
 //!
 //! # Standards alignment
 //!
-//! See `SECURITY.md` "Standards alignment" for the full discussion of
-//! why this library implements the original RFC 8391 (Aug 2018)
-//! `expand_seed` construction rather than the NIST SP 800-208
-//! (Oct 2020) refinement. The cross-verify CI accommodates the
-//! difference by pinning `xmss-reference` to commit `7793c40` (the
-//! last revision on the original spec).
+//! See `SECURITY.md` "XMSS provenance and standards alignment" for the
+//! full timeline. In brief, QRL's deployed WOTS private-string derivation
+//! matches the pseudorandom-generation example in RFC 8391. NIST SP
+//! 800-208 later selected a different `PRFkeygen` derivation for its
+//! stricter profile. Changing the deployed derivation would change QRL v1
+//! roots and addresses, so the cross-verify CI pins `xmss-reference` to
+//! commit `7793c40`, the last revision using the compatible construction.
 //!
 //! (TOB-QRLLIB-1 part 2 — Rust-port parity with the Go-side
 //! `crypto/xmss/rfc8391` sub-package.)
@@ -80,7 +84,8 @@ use crate::xmss::{XMSS_PUBLIC_KEY_SIZE, Xmss, XmssHashFunction, XmssHeight, veri
 const OID_LEN: usize = 4;
 
 /// Length in bytes of the pre-expanded seed material accepted by
-/// [`new_keypair`] (`SK_SEED || SK_PRF || PUB_SEED`, 3 × 32 bytes).
+/// [`crate::xmss::rfc8391::new_keypair`]
+/// (`SK_SEED || SK_PRF || PUB_SEED`, 3 × 32 bytes).
 pub const EXPANDED_SEED_SIZE: usize = 96;
 
 /// Length in bytes of the RFC 8391 public-key layout

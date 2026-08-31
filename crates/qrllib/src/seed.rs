@@ -13,7 +13,7 @@ pub struct Seed([u8; SEED_SIZE]);
 #[derive(Clone)]
 pub struct ExtendedSeed([u8; EXTENDED_SEED_SIZE]);
 
-fn trim_hex_prefix(value: &str) -> &str {
+pub(crate) fn trim_hex_prefix(value: &str) -> &str {
     value.strip_prefix("0x").or_else(|| value.strip_prefix("0X")).unwrap_or(value)
 }
 
@@ -164,6 +164,37 @@ impl ExtendedSeed {
             hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?,
         );
         Self::from_bytes(&bytes)
+    }
+
+    /// Assemble an extended seed **without** the production descriptor
+    /// policy check applied by [`Self::new`].
+    ///
+    /// Parity with go-qrllib: `SPHINCSPLUS_256S` is intentionally not a
+    /// valid common wallet descriptor while the wallet path is gated
+    /// (TOB-QRLLIB-4), so `wallet/sphincsplus_256s` cannot use
+    /// `common.NewExtendedSeed` and lays out the bytes by hand instead.
+    /// This is the Rust equivalent, and is crate-internal for the same
+    /// reason: it must not become a way for callers to route around
+    /// [`Descriptor::is_valid`].
+    pub(crate) fn from_parts_unchecked(descriptor: Descriptor, seed: &Seed) -> Self {
+        let mut bytes = [0_u8; EXTENDED_SEED_SIZE];
+        bytes[..DESCRIPTOR_SIZE].copy_from_slice(descriptor.as_ref());
+        bytes[DESCRIPTOR_SIZE..].copy_from_slice(seed.as_bytes());
+        Self(bytes)
+    }
+
+    /// Length-checked byte import that skips the descriptor policy check,
+    /// mirroring the raw `copy(extendedSeed[:], bin)` that Go's
+    /// `wallet/sphincsplus_256s` constructors perform before validating
+    /// the descriptor against their own package-local rules.
+    pub(crate) fn from_bytes_unchecked(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != EXTENDED_SEED_SIZE {
+            return Err(QrllibError::InvalidExtendedSeedSize(bytes.len(), EXTENDED_SEED_SIZE));
+        }
+
+        let mut extended = [0_u8; EXTENDED_SEED_SIZE];
+        extended.copy_from_slice(bytes);
+        Ok(Self(extended))
     }
 
     pub fn descriptor(&self) -> Descriptor {

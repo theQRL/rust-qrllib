@@ -70,7 +70,7 @@ MLKEM_ACVP_VECTORS_DIR=/tmp/acvp-server/gen-val/json-files \
 |-----------|------------------------|-------------|--------|
 | **ML-DSA-87** | Yes (ML-DSA FIPS 204) | Yes | Direct match |
 | **SPHINCS+** | No (SLH-DSA FIPS 205 only) | No | `rust-qrllib` implements SPHINCS+ SHAKE-256s-**robust** (pre-FIPS submission). FIPS 205 (SLH-DSA) dropped the robust variant and only standardized the simple variant. Different thash construction means different outputs. Cross-verified against sphincsplus reference (consistent-basew branch) instead. |
-| **XMSS** | No | N/A | XMSS (RFC 8391) is not an ACVP-validated algorithm. One-directional cross-verification against xmss-reference instead. |
+| **XMSS** | No | N/A | ACVP coverage is not available. `XMSS-SHA2_10_256` is instead cross-verified bidirectionally against the pinned RFC 8391 reference construction; see [the cross-verification guide](../cross-verify/README.md). |
 
 ## ACVP Vector Format
 

@@ -7,9 +7,10 @@
  * the `qrllib::xmss::rfc8391` interop module).
  *
  * Determinism: the reference is pinned to commit `7793c40` — the last
- * revision on the original RFC 8391 expand_seed construction, which is
- * the construction QRL XMSS implements (see SECURITY.md "Standards
- * alignment"). At this pin the reference does not yet expose a public
+ * revision using the pseudorandom private-key derivation described as an
+ * example in RFC 8391 and closely aligned with QRL's already-deployed
+ * construction (see SECURITY.md "XMSS provenance and standards alignment").
+ * At this pin the reference does not yet expose a public
  * seeded-keypair API, so we override `randombytes()` with an
  * implementation that consumes a fixed 96-byte buffer in order.
  * `xmssmt_core_keypair` then makes two calls (64 bytes for
@@ -137,7 +138,7 @@ int main(void) {
     fwrite(expanded_seed, 1, EXPANDED_SEED_BYTES, f);
     fclose(f);
 
-    printf("Reference XMSS-SHA2_10_256 signer (pre-SP-800-208 pin):\n");
+    printf("Reference XMSS-SHA2_10_256 signer (QRL-compatible pin):\n");
     printf("  PK size (root||pub_seed):       %u bytes\n", params.pk_bytes);
     printf("  PK size (OID||root||pub_seed):  %u bytes\n",
            (unsigned)(XMSS_OID_LEN + params.pk_bytes));

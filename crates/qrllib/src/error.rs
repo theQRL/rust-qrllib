@@ -121,6 +121,16 @@ pub enum QrllibError {
     )]
     WalletTypeNotIssuable(WalletType),
 
+    /// Sentinel for wallet-type verification gating, exposed for parity
+    /// with go-qrllib's `common.ErrWalletTypeNotVerifiable`. Wallet-level
+    /// verify helpers return `bool`, so they surface a plain `false`; this
+    /// variant is for callers that need to distinguish "signature invalid"
+    /// from "wallet type not currently verifiable".
+    #[error(
+        "{0} signature verification is gated; enable the `experimental-sphincsplus-issuance` Cargo feature to opt in. See SECURITY.md and `WalletType::is_verifiable`."
+    )]
+    WalletTypeNotVerifiable(WalletType),
+
     #[error(
         "unsupported XMSS parameter set OID 0x{0:08x}; only XMSS-SHA2_{{10,16,20}}_256 (0x01..0x03) and XMSS-SHAKE_{{10,16,20}}_256 (0x07..0x09) are accepted by the rfc8391 interop module"
     )]

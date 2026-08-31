@@ -14,8 +14,14 @@ Supported algorithms:
 |-----------|------|----------|----------|
 | ML-DSA-87 | Lattice-based | FIPS 204 | Primary stateless signature scheme |
 | ML-KEM-1024 | Lattice-based (KEM) | FIPS 203 | Key-encapsulation primitive (not a signature); standalone, not wallet-integrated |
-| SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path gated pending QRL's SLH-DSA parameter-set choice |
+| SPHINCS+-256s robust | Hash-based | SPHINCS+ submission (pre-FIPS 205) — see SPHINCS+ notes | Stateless primitive; wallet path (issuance **and** verification) gated pending QRL's SLH-DSA parameter-set choice |
 | XMSS | Hash-based | Pre-standardisation; see XMSS notes | QRL v1 → v2 migration |
+
+> **Critical — XMSS is stateful.** Reusing an OTS index can completely break
+> signature security. Persist the advanced index before using a signature,
+> never sign concurrently with the same key, and reconcile restored backups
+> against an append-only high-water mark. See [Safe XMSS Usage](#safe-xmss-usage)
+> and [SECURITY.md](SECURITY.md#xmss-state-management).
 
 ## Workspace
 
@@ -26,20 +32,20 @@ Supported algorithms:
 | `demo` | Vue + Tailwind demo app using the compiled wasm package |
 | `.github/workflows` | Rust-native CI, ACVP, cross-verification, release, security, and demo deployment workflows |
 
-## Native Rust API
+## Installation
 
-Until the first crates.io release, consume the core library as a workspace/path dependency:
-
-```toml
-[dependencies]
-qrllib = { path = "crates/qrllib" }
-```
-
-After publication, this becomes:
+Use the published crate:
 
 ```toml
 [dependencies]
 qrllib = "0.1"
+```
+
+For development against a checkout, use the workspace path instead:
+
+```toml
+[dependencies]
+qrllib = { path = "crates/qrllib" }
 ```
 
 Generate the complete Rust API reference locally:
@@ -47,6 +53,12 @@ Generate the complete Rust API reference locally:
 ```bash
 cargo doc -p qrllib --no-deps --open
 ```
+
+The repository CI currently tests with Rust 1.95.0. The browser demo and npm
+package build use Node.js 24.13.0 and wasm-pack 0.14.0; the exact versions are
+recorded in `.github/workflows`.
+
+## Native Rust API
 
 ### Wallet-Level API
 
@@ -58,7 +70,7 @@ Wallet APIs include QRL descriptors, address derivation, seeds, extended seeds, 
 | `SphincsPlus256sWallet` | SPHINCS+-256s robust QRL wallet wrapper |
 | `LegacyXmssWallet` | Legacy XMSS QRL wallet wrapper |
 | `verify_mldsa87_wallet_signature` | Verify ML-DSA-87 wallet signatures with descriptor binding |
-| `verify_sphincsplus_wallet_signature` | Verify SPHINCS+ wallet signatures with descriptor binding |
+| `verify_sphincsplus_wallet_signature` | Verify SPHINCS+ wallet signatures with descriptor binding (gated — see SPHINCS+ notes) |
 | `verify_legacy_xmss` | Verify legacy XMSS signatures |
 
 Wallet-level `sign` / `verify_*` bind every signature to its descriptor via a fixed 8-byte domain-separated context: `"ZOND" || SIGNING_CONTEXT_VERSION || descriptor`. ML-DSA-87 passes it as the FIPS 204 ctx parameter; SPHINCS+-256s prepends it to the message. Callers do not need to construct the context themselves — wallet helpers do it internally — but `qrllib::signing_context(descriptor)` is exposed for parity with go-qrllib. Bumping `SIGNING_CONTEXT_VERSION` is a hard break of the signature wire format.
@@ -104,7 +116,12 @@ fn main() -> Result<(), qrllib::QrllibError> {
 }
 ```
 
-SPHINCS+-256s wallet round trip:
+SPHINCS+-256s wallet round trip — **requires the `experimental-sphincsplus-issuance`
+feature** (`cargo run --features experimental-sphincsplus-issuance`). In a default
+build `from_seed` returns `QrllibError::WalletTypeNotIssuable` and
+`verify_sphincsplus_wallet_signature` returns `false`, because the SPHINCS+ wallet
+path is gated on both sides (see [SPHINCS+ notes](#sphincs-notes)). The raw
+`SphincsPlus256s` primitive below the wallet layer needs no feature:
 
 ```rust
 use qrllib::{Seed, SphincsPlus256sWallet, verify_sphincsplus_wallet_signature};
@@ -153,7 +170,7 @@ Low-level signers are available for callers that do not need wallet descriptors,
 |-----|---------|
 | `MlDsa87` | FIPS 204 ML-DSA-87 signer with context-aware signing |
 | `SphincsPlus256s` | SPHINCS+-SHAKE-256s-robust signer |
-| `Xmss` | Lower-level RFC 8391 XMSS tree signer |
+| `Xmss` | Lower-level QRL-compatible XMSS tree signer |
 
 Common low-level methods:
 
@@ -195,7 +212,7 @@ ML-KEM-1024 (FIPS 203) is a standalone key-encapsulation primitive — **not** a
 | `WalletType` | Modern wallet algorithm identifier |
 | `QrlDescriptor` | Legacy XMSS descriptor |
 | `XmssHashFunction`, `XmssHeight` | XMSS parameter types |
-| `format_address`, `get_address`, `is_valid_address`, `to_checksum_address`, `is_valid_checksum_address` | Modern QRL address helpers. `format_address` emits the canonical lowercase form; `to_checksum_address` emits the EIP-55-style mixed-case checksummed form. `is_valid_address` is permissive (accepts uniform-case or checksummed); `is_valid_checksum_address` is strict (canonical checksummed form only). |
+| `format_address`, `get_address`, `is_valid_address`, `to_checksum_address`, `is_valid_checksum_address` | Modern QRL address helpers. `format_address` emits the canonical lowercase form; `to_checksum_address` emits the EIP-55-style mixed-case checksummed form. `is_valid_address` is permissive about the hex body (accepts uniform-case or checksummed) but still requires an uppercase `Q` prefix, matching `go-qrllib`; `is_valid_checksum_address` is strict (canonical checksummed form only). |
 | `get_xmss_address_from_pk`, `is_valid_xmss_address` | Legacy XMSS address helpers |
 | `bin_to_mnemonic`, `mnemonic_to_bin` | QRL wordlist conversion helpers |
 | `signing_context`, `SIGNING_CONTEXT_VERSION`, `SIGNING_CONTEXT_PREFIX`, `SIGNING_CONTEXT_SIZE` | Domain-separated signing-context helpers used by wallet-level sign/verify |
@@ -220,6 +237,30 @@ SPHINCS+-256s robust is randomised-by-default per its parameter-set definition; 
 | Maximum security, don't trust lattice assumptions | `SphincsPlus256s` raw primitive (wallet path gated, see SPHINCS+ notes) |
 | Legacy QRL v1 address compatibility | `LegacyXmssWallet` (with extreme care; see XMSS notes) |
 
+Key and output sizes are fixed by each supported parameter set:
+
+| Primitive | Seed / secret input | Public / encapsulation key | Signature / ciphertext | Shared secret |
+|-----------|---------------------|----------------------------|------------------------|---------------|
+| ML-DSA-87 | 32-byte seed; 4,896-byte encoded secret key | 2,592 bytes | 4,627-byte signature | n/a |
+| SPHINCS+-SHAKE-256s-robust | 96-byte seed; 128-byte encoded secret key | 64 bytes | 29,792-byte signature | n/a |
+| ML-KEM-1024 | 64-byte `d \|\| z` seed | 1,568 bytes | 1,568-byte ciphertext | 32 bytes |
+| XMSS | 48-byte QRL seed; 132-byte core secret state | 64-byte core public key | Variable by tree height | n/a |
+
+Use the exported `*_SIZE` constants rather than duplicating these values in
+application code.
+
+### Thread Safety
+
+ML-DSA-87 and SPHINCS+ signing methods take `&self`; immutable signer instances
+may be shared using normal Rust synchronization and ownership rules. ML-KEM
+encapsulation and decapsulation are likewise non-mutating.
+
+XMSS is deliberately different: `Xmss::sign` and `LegacyXmssWallet::sign` take
+`&mut self`, and neither signer implements `Clone`. This prevents concurrent
+mutation of one in-memory instance in safe Rust, but it cannot prevent two
+processes or two independently restored instances from using the same OTS
+index. Applications still need a single durable signing authority per XMSS key.
+
 ### Safe XMSS Usage
 
 XMSS is a **stateful** scheme. Signing two different messages under the same OTS index causes irreversible compromise of the one-time WOTS chains at that position. The library takes a two-part approach:
@@ -231,11 +272,43 @@ If you serialise the secret-key bytes via `wallet.secret_key()` and re-instantia
 
 ### XMSS notes
 
-This library's XMSS implementation **predates RFC 8391** (the spec was published in August 2018, after QRL v1 launched) and is retained as a v1 → v2 **migration vehicle** — it is not intended as a general standards-tracking XMSS implementation. Where parameter-set choices happen to overlap with RFC 8391 (XMSS-SHA2_10_256 and XMSS-SHAKE_256_10_256), signatures produced by `rust-qrllib` verify under the RFC 8391 reference implementation (see `.github/workflows/cross-verify.yml`). The library does **not** track later standards updates such as NIST SP 800-208 (October 2020), which refined `expand_seed` to take additional inputs — adopting that refinement would change the keypair derived from any given v1 seed and break compatibility with existing v1 mainnet addresses. **`Shake128`** is a pre-standardisation QRL-specific hash variant, retained for v1 mainnet address compatibility only, and is not part of RFC 8391 or SP 800-208. For new wallets, use **`MlDsa87Wallet`** (FIPS 204). See [SECURITY.md](SECURITY.md) for the full provenance discussion.
+QRL's XMSS construction was deployed before RFC 8391 was published in May
+2018. The eventual RFC specified a construction that is closely aligned
+with QRL for the overlapping SHA2-256 and SHAKE256 parameter families,
+including the same signature byte layout. The bidirectional reference test in
+`.github/workflows/cross-verify.yml` proves this interoperability for
+`XMSS-SHA2_10_256`; the
+[`xmss::rfc8391`](crates/qrllib/src/xmss/rfc8391.rs) adapter maps the other supported
+`n=32` RFC parameter-set OIDs and bridges QRL's seed and public-key encodings.
+
+The deployed derivation is intentionally stable: changing it would produce
+different roots and therefore different addresses for existing immutable QRL
+v1 keys. RFC 8391 permits pseudorandom private-key generation and presents the
+legacy `PRF(seed, toByte(i, 32))` derivation as an example. NIST SP 800-208,
+published later in October 2020, defines a stricter profile with a different
+`PRFkeygen` derivation and additional operational requirements. That later
+profile is not the compatibility target of this library; this does not affect
+RFC-format signature interoperability for the overlapping construction.
+**`Shake128`** remains a pre-standardisation QRL-specific variant and is not an
+RFC 8391 or SP 800-208 parameter set. For new wallets, use
+**`MlDsa87Wallet`** (FIPS 204). See [SECURITY.md](SECURITY.md) for the full
+timeline, scope, and compatibility guarantees.
 
 ### SPHINCS+ notes
 
-The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is reserved in the descriptor format so existing addresses keep working (`is_verifiable()` always returns `true`). Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need to construct SPHINCS+ wallets locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`). For new wallets, use **`MlDsa87Wallet`**.
+The implementation here is the **SPHINCS+ submission** (pre-FIPS 205), specifically `SHAKE-256s-robust`. NIST published [SLH-DSA (FIPS 205)](https://csrc.nist.gov/pubs/fips/205/final) in August 2024 as the standardised successor; FIPS 205 differs from the SPHINCS+ submission in parameter-set details. The QRL wallet layer **does not currently issue new SPHINCS+/SLH-DSA wallets** — `WalletType::SphincsPlus256s.is_issuable()` returns `false` until QRL settles on a specific SLH-DSA parameter set and the implementation is updated to match it. The wallet type is also **not verifiable** through the wallet layer — `WalletType::SphincsPlus256s.is_verifiable()` returns `false`, and `verify_sphincsplus_wallet_signature` returns `false` in a default build. No SPHINCS+ signatures have ever been produced on QRL networks, so refusing verification matches the on-chain reality (and go-qrllib's `wallettype.IsVerifiable`). For the same reason `Descriptor::is_valid()` rejects the SPHINCS+ descriptor, so `get_address` and `ExtendedSeed` refuse it too. Direct use of the raw [`SphincsPlus256s`] primitive (outside the wallet layer) remains unrestricted with the caveat that the parameter set may change once SLH-DSA finalises for QRL. Developers who need the SPHINCS+ wallet path locally can opt in via the `experimental-sphincsplus-issuance` Cargo feature (`cargo build --features experimental-sphincsplus-issuance`), which re-enables both construction and verification. For new wallets, use **`MlDsa87Wallet`**.
+
+### Standards and interoperability
+
+| Primitive | Alignment | Verification |
+|-----------|-----------|--------------|
+| ML-DSA-87 | FIPS 204 | NIST ACVP vectors plus cross-verification against pq-crystals and `go-qrllib` |
+| ML-KEM-1024 | FIPS 203 | NIST ACVP, C2SP/Wycheproof, C2SP/CCTV, and byte-for-byte `go-qrllib` cross-vectors |
+| SPHINCS+-SHAKE-256s-robust | SPHINCS+ submission, before FIPS 205 | Upstream reference cross-verification; intentionally not described as SLH-DSA |
+| XMSS | Pre-RFC QRL construction, closely aligned with RFC 8391 for overlapping `n=32` parameter sets | Bidirectional `XMSS-SHA2_10_256` reference cross-verification; OID/encoding adapters for the other supported RFC parameter sets |
+
+The corresponding workflows and vector provenance live under `.github/acvp`,
+`.github/wycheproof`, and `.github/cross-verify`.
 
 ### Keeping Secrets in Memory for the Minimum Time
 
@@ -430,7 +503,7 @@ cargo fmt --all -- --check
 cargo test --workspace --locked
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo llvm-cov --locked --package qrllib --summary-only
-cd demo && npm run build
+cd demo && npm run build:wasm && npm run typecheck:app && npm run build:app
 ```
 
 Run coverage on nightly (`cargo +nightly llvm-cov --locked --package qrllib --summary-only`) to honour `#[cfg_attr(coverage_nightly, coverage(off))]` exclusions on defensive helpers whose guards cannot fire from internal callers (e.g. `constant_time_eq` length-mismatch, the duplicate length guards inside `crypto_sign_open*`). On stable the attribute is a no-op and those branches count against the ceiling.
@@ -446,6 +519,14 @@ Additional CI coverage:
 ## Security
 
 See [SECURITY.md](SECURITY.md) for the threat model, algorithm notes, release verification, SBOMs, and attestation details.
+
+## Contributing
+
+Use Conventional Commit messages, keep direct dependencies exact-pinned, and
+run the commands in [Verification](#verification) before opening a pull request.
+Cryptographic changes must include regression or vector coverage and pass the
+cross-implementation workflows. See [RELEASE.md](RELEASE.md) for the versioning
+and release process.
 
 ## License
 

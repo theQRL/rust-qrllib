@@ -232,10 +232,12 @@ impl LegacyXmssWallet {
 
     /// Generate a brand-new legacy XMSS wallet from fresh OS randomness.
     ///
-    /// go-qrllib CIPH-QRLLIB-3: `SHAKE_128` is a QRL-only, pre-SP-800-208 XMSS
-    /// hash with a reduced quantum-security margin, retained solely for
-    /// compatibility with existing v1 addresses. New issuance is therefore
-    /// refused under it — use `SHAKE_256` or `SHA2_256`. Reconstructing an
+    /// go-qrllib CIPH-QRLLIB-3: `SHAKE_128` is a QRL-specific,
+    /// pre-standardisation XMSS hash option with a reduced quantum-security
+    /// margin. It has no RFC 8391 or SP 800-208 parameter-set identifier and is
+    /// retained solely for compatibility with existing v1 addresses. New
+    /// issuance is therefore refused under it — use `SHAKE_256` or `SHA2_256`.
+    /// Reconstructing an
     /// existing `SHAKE_128` wallet from a caller-supplied seed
     /// ([`Self::new_from_seed`]), an extended seed
     /// ([`Self::new_from_extended_seed`]), or the raw [`Xmss`] primitives, and

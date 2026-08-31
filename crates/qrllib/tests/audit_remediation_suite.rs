@@ -7,8 +7,7 @@
 use qrllib::{
     Descriptor, ExtendedSeed, LegacyXmssWallet, ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet,
     QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, Seed, SphincsPlus256s,
-    SphincsPlus256sWallet, XMSS_SECRET_KEY_SIZE, XMSS_SEED_SIZE, Xmss, XmssHashFunction,
-    XmssHeight, enable_experimental_sphincsplus_issuance_for_testing,
+    XMSS_SECRET_KEY_SIZE, XMSS_SEED_SIZE, Xmss, XmssHashFunction, XmssHeight,
 };
 
 /// The recognisable secret byte used to build every fixture below; its decimal
@@ -24,14 +23,11 @@ const SECRET_MARK: &str = "171";
 
 #[test]
 fn secret_bearing_debug_is_redacted() {
-    enable_experimental_sphincsplus_issuance_for_testing();
-
     let seed = Seed::from_bytes(&[SECRET_BYTE; SEED_SIZE]).expect("seed");
     let extended = ExtendedSeed::new(Descriptor::mldsa87(), &seed).expect("extended seed");
     let mldsa = MlDsa87::from_seed([SECRET_BYTE; ML_DSA_87_CRYPTO_SEED_SIZE]);
     let sphincs = SphincsPlus256s::from_seed([SECRET_BYTE; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE]);
     let mldsa_wallet = MlDsa87Wallet::from_seed(seed.clone()).expect("ml-dsa wallet");
-    let sphincs_wallet = SphincsPlus256sWallet::from_seed(seed.clone()).expect("sphincs wallet");
     let legacy_wallet =
         LegacyXmssWallet::new(XmssHeight::new(4).expect("height"), XmssHashFunction::Shake256)
             .expect("legacy wallet");
@@ -42,13 +38,12 @@ fn secret_bearing_debug_is_redacted() {
     )
     .expect("xmss");
 
-    let cases: [(String, &str); 8] = [
+    let cases: [(String, &str); 7] = [
         (format!("{seed:?}"), "Seed"),
         (format!("{extended:?}"), "ExtendedSeed"),
         (format!("{mldsa:?}"), "MlDsa87"),
         (format!("{sphincs:?}"), "SphincsPlus256s"),
         (format!("{mldsa_wallet:?}"), "MlDsa87Wallet"),
-        (format!("{sphincs_wallet:?}"), "SphincsPlus256sWallet"),
         (format!("{legacy_wallet:?}"), "LegacyXmssWallet"),
         (format!("{xmss:?}"), "Xmss"),
     ];
@@ -73,6 +68,33 @@ fn secret_bearing_debug_is_redacted() {
             "debug output for {type_name} leaked secret bytes: {rendered}"
         );
     }
+}
+
+/// `SphincsPlus256sWallet`'s half of the CIPH-RUSTQRL-1 contract, split out
+/// because constructing one needs the gated issuance path. The runtime opt-in
+/// helper is compiled only into debug builds or builds with
+/// `experimental-sphincsplus-issuance` (TOB-QRLLIB-4 / CIPH-RUSTQRL-6), and
+/// integration tests do not inherit the crate's own `cfg(test)` scope, so this
+/// test carries the same cfg and `cargo test --release` still compiles without
+/// the feature. Default `cargo test` and `cargo llvm-cov` are debug builds and
+/// run it as before.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
+#[test]
+fn sphincs_wallet_debug_is_redacted() {
+    qrllib::enable_experimental_sphincsplus_issuance_for_testing();
+
+    let seed = Seed::from_bytes(&[SECRET_BYTE; SEED_SIZE]).expect("seed");
+    let wallet = qrllib::SphincsPlus256sWallet::from_seed(seed).expect("sphincs wallet");
+    let rendered = format!("{wallet:?}");
+
+    assert!(rendered.contains("SphincsPlus256sWallet"), "debug output should name the type");
+    assert!(rendered.contains(".."), "debug output must elide fields: {rendered}");
+    assert!(
+        rendered.len() < 512,
+        "debug output is too large to be redacted ({} bytes): {rendered}",
+        rendered.len()
+    );
+    assert!(!rendered.contains(SECRET_MARK), "debug output leaked secret bytes: {rendered}");
 }
 
 // -------------------------------------------------------------------------

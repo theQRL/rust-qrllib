@@ -4,10 +4,17 @@
 //! every sign / sign_attached path.
 
 use qrllib::{
-    ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, Seed, SphincsPlus256sWallet,
-    Xmss, XmssHashFunction, XmssHeight, format_address, is_valid_address,
-    sign_mldsa_with_secret_key,
+    ML_DSA_87_CRYPTO_SEED_SIZE, MlDsa87, MlDsa87Wallet, QrllibError, Seed, Xmss, XmssHashFunction,
+    XmssHeight, format_address, is_valid_address, sign_mldsa_with_secret_key,
 };
+
+// `enable_experimental_sphincsplus_issuance_for_testing` is compiled only into
+// debug builds or builds with `experimental-sphincsplus-issuance`
+// (TOB-QRLLIB-4 / CIPH-RUSTQRL-6), and integration tests do not inherit the
+// crate's own `cfg(test)` scope. The SPHINCS+ wallet tests below therefore
+// carry the same cfg, so `cargo test --release` still compiles without the
+// feature. Default `cargo test` and `cargo llvm-cov` are debug builds and run
+// them as before.
 
 #[test]
 fn mldsa_wallet_sign_randomized_varies_and_verifies() {
@@ -54,11 +61,16 @@ fn free_function_randomised_sign_entry_points_are_exposed() {
 }
 
 #[test]
-fn is_valid_address_accepts_both_case_prefixes() {
+fn is_valid_address_requires_an_uppercase_q_prefix() {
+    // Parity with go-qrllib's `IsValidAddress`: the `Q` prefix is
+    // uppercase-only, so both libraries accept exactly the same set of
+    // address strings. Case-insensitivity applies to the hex body alone.
     let raw = format_address(&[0xab; qrllib::ADDRESS_SIZE]);
-    let mixed = format!("q{}", raw[1..].to_ascii_uppercase());
+    let lower_prefix = format!("q{}", &raw[1..]);
+    let upper_body = format!("Q{}", raw[1..].to_ascii_uppercase());
     assert!(is_valid_address(&raw), "canonical Q-prefixed address must validate");
-    assert!(is_valid_address(&mixed), "lowercase-q-prefixed mixed-case address must validate");
+    assert!(is_valid_address(&upper_body), "all-uppercase hex body must validate");
+    assert!(!is_valid_address(&lower_prefix), "lowercase-q prefix must not validate");
 }
 
 #[test]
@@ -74,6 +86,7 @@ fn mldsa_wallet_seal_rejects_zeroized_signer() {
     assert!(matches!(result, Err(QrllibError::MlDsaSecretKeyZeroized)));
 }
 
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
 #[test]
 fn sphincs_wallet_sign_rejects_zeroized_signer() {
     // Bypass the SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) for this
@@ -82,7 +95,7 @@ fn sphincs_wallet_sign_rejects_zeroized_signer() {
     qrllib::enable_experimental_sphincsplus_issuance_for_testing();
 
     let seed = Seed::from_bytes(&[41_u8; qrllib::SEED_SIZE]).expect("seed");
-    let mut wallet = SphincsPlus256sWallet::from_seed(seed).expect("wallet");
+    let mut wallet = qrllib::SphincsPlus256sWallet::from_seed(seed).expect("wallet");
     wallet.zeroize();
 
     assert!(matches!(

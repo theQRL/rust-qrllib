@@ -119,7 +119,8 @@ matches the `qrllib-vX.Y.Z` release.
    `release.yml`, environment `npm-publish`.
 
 To publish by hand instead, run the two commands above locally after `npm login`
-(requires `npm >= 11.5.1`).
+(requires `npm >= 11.5.1`). The workflow's pinned Node.js 24.13.0 distribution
+already includes npm 11.6.2, so no global npm replacement step is needed.
 
 ## 5. Verifying a release
 

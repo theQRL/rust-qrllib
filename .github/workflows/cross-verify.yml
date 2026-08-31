@@ -21,7 +21,7 @@ jobs:
     name: ML-DSA-87 (FIPS 204) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -72,7 +72,7 @@ jobs:
     name: SPHINCS+ (SHAKE-256s-robust) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -128,7 +128,7 @@ jobs:
     name: XMSS (SHA2_10_256) Cross-Verification
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
 
@@ -137,16 +137,16 @@ jobs:
         with:
           toolchain: 1.95.0
 
-      - name: Clone XMSS reference (pinned to original RFC 8391 spec)
+      - name: Clone XMSS reference (pinned to QRL-compatible RFC construction)
         run: |
-          # QRL's XMSS implementation predates RFC 8391 and is retained
-          # as a v1 → v2 migration shim. Pinning to commit 7793c40
-          # (2020-04-14) — the last revision on the original RFC 8391
-          # expand_seed construction, before SP 800-208's later
-          # refinement landed in commit 3e28db2 — keeps cross-verify
-          # aligned with the construction QRL actually targets.
+          # QRL deployed XMSS before RFC 8391, whose optional pseudorandom
+          # private-key-generation example closely matches QRL's construction.
+          # Pinning commit 7793c40 (2020-04-14), the last reference revision
+          # using that derivation, keeps this compatibility test aligned with
+          # immutable QRL v1 keys. Commit 3e28db2 later adopted the different
+          # PRFkeygen construction selected for NIST SP 800-208's profile.
           # See ../cross-verify/README.md "XMSS" section and SECURITY.md
-          # "Standards alignment" for the rationale.
+          # "XMSS provenance and standards alignment" for the rationale.
           git clone https://github.com/XMSS/xmss-reference.git /tmp/xmss-ref
           cd /tmp/xmss-ref
           git checkout 7793c40

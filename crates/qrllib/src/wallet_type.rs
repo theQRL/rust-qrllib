@@ -1,60 +1,19 @@
-use core::sync::atomic::{AtomicBool, Ordering};
-
 use crate::{
     SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
     error::{QrllibError, Result},
     mldsa::ML_DSA_87_PUBLIC_KEY_SIZE,
 };
 
-/// Process-wide runtime override for the SPHINCS+ issuance gate.
-/// Set by [`enable_experimental_sphincsplus_issuance_for_testing`].
-/// (TOB-QRLLIB-4 — Rust-port mirror of the Go-side
-/// `EnableExperimentalForTesting` helper.)
-static SPHINCSPLUS_ISSUANCE_BYPASS: AtomicBool = AtomicBool::new(false);
-
-/// Enable SPHINCS+/SLH-DSA wallet issuance for the lifetime of the
-/// current process. Intended for **test harnesses and developer
-/// experimentation**.
+/// QRL wallet type discriminant, mirroring go-qrllib's
+/// `wallet/common/wallettype.WalletType`.
 ///
-/// # Availability (CIPH-RUSTQRL-6 / go-qrllib CIPH-QRLLIB-2)
-///
-/// This helper is compiled **only** into debug builds (`debug_assertions`)
-/// or builds that enable the `experimental-sphincsplus-issuance` Cargo
-/// feature. It is **absent from a default release/production build**, so
-/// production code cannot link it and cannot flip the process-wide issuance
-/// bypass. Production code that deliberately wants SPHINCS+ issuance must
-/// opt in with the `experimental-sphincsplus-issuance` feature, which sets
-/// the gate at the build-system level and does not need this helper.
-///
-/// Cargo integration tests under `tests/` are downstream consumers that do
-/// **not** inherit qrllib's `cfg(test)` scope, so the
-/// `cfg(any(test, feature = "..."))` arm in [`WalletType::is_issuable`]
-/// treats them as production; they run in debug and therefore still see this
-/// helper. The intended pattern is:
-///
-/// ```ignore
-/// use qrllib::enable_experimental_sphincsplus_issuance_for_testing;
-///
-/// #[test]
-/// fn my_sphincs_wallet_test() {
-///     enable_experimental_sphincsplus_issuance_for_testing();
-///     // ... now SphincsPlus256sWallet::generate() etc. work.
-/// }
-/// ```
-///
-/// Once called, the bypass cannot be disabled within the same
-/// process — this is intentional so a misuse cannot accidentally undo
-/// a deliberate enable elsewhere in the process.
-#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
-pub fn enable_experimental_sphincsplus_issuance_for_testing() {
-    SPHINCSPLUS_ISSUANCE_BYPASS.store(true, Ordering::Relaxed);
-}
-
-/// Internal probe used by [`WalletType::is_issuable`].
-fn sphincsplus_issuance_bypass_active() -> bool {
-    SPHINCSPLUS_ISSUANCE_BYPASS.load(Ordering::Relaxed)
-}
-
+/// [`Self::SphincsPlus256s`] is a **reserved** constant, not a usable
+/// production wallet type: QRL has not committed to a specific SLH-DSA
+/// (FIPS 205) parameter set, and the implementation carried here is the
+/// pre-FIPS SPHINCS+ submission. Every gate below therefore answers
+/// `false` for it, exactly as the Go side does. The experimental
+/// SPHINCS+ wallet path layers its own opt-in on top of these gates —
+/// see [`crate::sphincsplus_wallet`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum WalletType {
@@ -74,45 +33,46 @@ impl WalletType {
         }
     }
 
-    /// Whether the QRL wallet layer will currently issue *new* wallets
-    /// of this type. (TOB-QRLLIB-4.)
+    /// Whether this wallet type is valid in the production common wallet
+    /// API today. (TOB-QRLLIB-4; parity with Go's
+    /// `wallettype.WalletType.IsValid`.)
     ///
-    /// - [`Self::MlDsa87`] — always `true`. ML-DSA-87 is the primary
-    ///   recommended QRL v2 algorithm (FIPS 204).
-    /// - [`Self::SphincsPlus256s`] — `true` only when the
-    ///   `experimental-sphincsplus-issuance` Cargo feature is enabled
-    ///   (or in in-crate tests). The implementation here is the
-    ///   pre-FIPS-205 SPHINCS+ submission, QRL has not yet committed
-    ///   to a specific SLH-DSA parameter set under FIPS 205, and
-    ///   activating the wallet path now would commit users to a
-    ///   parameter set that may change. The wallet type is reserved
-    ///   in the descriptor format so existing addresses keep working
-    ///   (see [`is_verifiable`]).
-    ///
-    /// [`is_verifiable`]: Self::is_verifiable
-    pub fn is_issuable(self) -> bool {
+    /// [`Self::SphincsPlus256s`] remains a reserved constant but is not a
+    /// valid wallet type until QRL activates a reviewed SLH-DSA path.
+    pub const fn is_valid(self) -> bool {
         match self {
             Self::MlDsa87 => true,
-            Self::SphincsPlus256s => {
-                cfg!(any(test, feature = "experimental-sphincsplus-issuance"))
-                    || sphincsplus_issuance_bypass_active()
-            }
+            Self::SphincsPlus256s => false,
         }
     }
 
-    /// Whether the QRL wallet layer will currently *verify* signatures
-    /// for this wallet type. (TOB-QRLLIB-4.)
+    /// Whether the QRL wallet layer will construct *new* wallets of this
+    /// type. (TOB-QRLLIB-4; parity with Go's `IsIssuable`.)
     ///
-    /// Always `true` for both [`Self::MlDsa87`] and
-    /// [`Self::SphincsPlus256s`] — existing addresses must continue to
-    /// be verifiable regardless of the issuance gate. The pair
-    /// (`is_issuable`, `is_verifiable`) lets a wallet type be
-    /// "verify-only" (existing addresses keep working but new wallets
-    /// cannot be created), which is the current SPHINCS+/SLH-DSA
-    /// posture.
+    /// Wallet constructors call this before deriving key material and
+    /// return [`QrllibError::WalletTypeNotIssuable`] on a `false` result.
+    pub const fn is_issuable(self) -> bool {
+        match self {
+            Self::MlDsa87 => true,
+            Self::SphincsPlus256s => false,
+        }
+    }
+
+    /// Whether the QRL wallet layer has an active verification path for
+    /// signatures produced under this wallet type. (TOB-QRLLIB-4; parity
+    /// with Go's `IsVerifiable`.)
+    ///
+    /// [`Self::SphincsPlus256s`] is `false`: no signatures have ever been
+    /// produced under it on QRL networks, so refusing verification today
+    /// is consistent with the on-chain reality. Wallet-level verify
+    /// helpers return `false` on a `false` result; the sentinel
+    /// [`QrllibError::WalletTypeNotVerifiable`] is exposed for callers
+    /// that need to distinguish "signature invalid" from "wallet type not
+    /// currently supported".
     pub const fn is_verifiable(self) -> bool {
         match self {
-            Self::MlDsa87 | Self::SphincsPlus256s => true,
+            Self::MlDsa87 => true,
+            Self::SphincsPlus256s => false,
         }
     }
 }
@@ -120,10 +80,21 @@ impl WalletType {
 impl TryFrom<u8> for WalletType {
     type Error = QrllibError;
 
+    /// Validated byte → wallet-type conversion, mirroring Go's
+    /// `wallettype.ToWalletType`.
+    ///
+    /// Only bytes naming a [`WalletType::is_valid`] type convert. The
+    /// reserved [`WalletType::SphincsPlus256s`] discriminant (`0`) is
+    /// therefore **rejected** here even though the variant exists — the
+    /// experimental SPHINCS+ wallet path compares
+    /// [`Descriptor::type_code`] against [`WalletType::code`] directly
+    /// rather than going through this conversion, exactly as Go's
+    /// `wallet/sphincsplus_256s` package does.
+    ///
+    /// [`Descriptor::type_code`]: crate::descriptor::Descriptor::type_code
     fn try_from(value: u8) -> Result<Self> {
         match value {
-            0 => Ok(Self::SphincsPlus256s),
-            1 => Ok(Self::MlDsa87),
+            v if v == Self::MlDsa87.code() => Ok(Self::MlDsa87),
             _ => Err(QrllibError::UnknownWalletType(value)),
         }
     }
@@ -141,27 +112,40 @@ impl core::fmt::Display for WalletType {
 #[cfg(test)]
 mod tests {
     use super::WalletType;
+    use crate::error::QrllibError;
 
     #[test]
-    fn mldsa87_is_always_issuable() {
+    fn mldsa87_is_valid_issuable_and_verifiable() {
         // ML-DSA-87 is the primary recommended QRL v2 algorithm (FIPS 204)
-        // and is issuable regardless of the SPHINCS+ experimental gate.
+        // and is the only production wallet type today.
+        assert!(WalletType::MlDsa87.is_valid());
         assert!(WalletType::MlDsa87.is_issuable());
-    }
-
-    #[test]
-    fn sphincsplus_is_issuable_in_crate_test_build() {
-        // Exercises the `SphincsPlus256s` arm of `is_issuable`: the
-        // `cfg!(any(test, feature = ...))` probe is `true` in an in-crate test
-        // build, so issuance is permitted here even without the Cargo feature.
-        assert!(WalletType::SphincsPlus256s.is_issuable());
-    }
-
-    #[test]
-    fn both_wallet_types_are_verifiable() {
-        // Existing addresses must remain verifiable for both wallet types
-        // regardless of the issuance gate (TOB-QRLLIB-4).
         assert!(WalletType::MlDsa87.is_verifiable());
-        assert!(WalletType::SphincsPlus256s.is_verifiable());
+    }
+
+    #[test]
+    fn sphincsplus_is_gated_on_every_axis() {
+        // Parity with go-qrllib: SPHINCSPLUS_256S is a reserved constant,
+        // not a valid/issuable/verifiable production wallet type
+        // (TOB-QRLLIB-4). The experimental opt-in lives in
+        // `sphincsplus_wallet`, not here.
+        assert!(!WalletType::SphincsPlus256s.is_valid());
+        assert!(!WalletType::SphincsPlus256s.is_issuable());
+        assert!(!WalletType::SphincsPlus256s.is_verifiable());
+    }
+
+    #[test]
+    fn try_from_accepts_only_valid_wallet_types() {
+        assert_eq!(WalletType::try_from(1).expect("ML-DSA-87"), WalletType::MlDsa87);
+        // The reserved SPHINCS+ discriminant does not convert, matching
+        // Go's `ToWalletType`.
+        assert!(matches!(WalletType::try_from(0), Err(QrllibError::UnknownWalletType(0))));
+        assert!(matches!(WalletType::try_from(9), Err(QrllibError::UnknownWalletType(9))));
+    }
+
+    #[test]
+    fn display_names_match_go_constants() {
+        assert_eq!(WalletType::MlDsa87.to_string(), "ML_DSA_87");
+        assert_eq!(WalletType::SphincsPlus256s.to_string(), "SPHINCSPLUS_256S");
     }
 }

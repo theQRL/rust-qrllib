@@ -41,7 +41,13 @@ Additional workflow coverage:
 
 Directionality:
 
-- ML-DSA-87 and SPHINCS+ are bidirectional.
-- XMSS is one-directional only: `rust-qrllib -> reference`.
+- ML-DSA-87, SPHINCS+, and XMSS are bidirectional.
 
-XMSS one-directional verification is intentional because the RFC 8391 reference implementation has no deterministic seeded keypair API compatible with QRL's seed expansion.
+The XMSS workflow proves both directions for `XMSS-SHA2_10_256` against
+`xmss-reference` commit `7793c40`. That pin uses the pseudorandom private-key
+derivation described as an example in RFC 8391 and closely aligned with QRL's
+already-deployed construction. The `xmss::rfc8391` adapter supplies the direct
+96-byte seed and RFC OID/public-key conventions needed to compare identical
+keys despite QRL's 48-byte wallet-seed and three-byte descriptor conventions.
+See `.github/cross-verify/README.md` and SECURITY.md "XMSS provenance and
+standards alignment" for the scope and immutable-chain compatibility rationale.

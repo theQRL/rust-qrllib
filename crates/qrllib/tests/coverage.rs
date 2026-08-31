@@ -2,8 +2,7 @@ use qrllib::{
     ADDRESS_SIZE, DESCRIPTOR_SIZE, Descriptor, ExtendedSeed, ML_DSA_87_CRYPTO_SEED_SIZE,
     ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
     MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed,
-    SphincsPlus256s, SphincsPlus256sWallet, WalletType, bin_to_mnemonic,
-    enable_experimental_sphincsplus_issuance_for_testing, extract_message, extract_signature,
+    SphincsPlus256s, WalletType, bin_to_mnemonic, extract_message, extract_signature,
     format_address, get_address, is_valid_address, mnemonic_to_bin, open,
     validate_mldsa_public_key, validate_mldsa_secret_key, verify_mldsa87_wallet_signature,
 };
@@ -40,7 +39,27 @@ fn descriptor_wallet_type_and_address_validation_paths_are_exercised() {
         );
         assert!(get_address(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE], descriptor).is_err());
     }
+    // Descriptor-level gates, parity with go-qrllib's `descriptor.IsValid` /
+    // `IsIssuable` / `IsVerifiable` (TOB-QRLLIB-4). ML-DSA-87 passes all
+    // three; the reserved SPHINCS+ descriptor passes none, and neither does
+    // an unknown type code.
+    assert!(descriptor.is_valid() && descriptor.is_issuable() && descriptor.is_verifiable());
+    let sphincs_descriptor = Descriptor::sphincsplus256s();
+    assert!(!sphincs_descriptor.is_valid());
+    assert!(!sphincs_descriptor.is_issuable());
+    assert!(!sphincs_descriptor.is_verifiable());
+    assert!(sphincs_descriptor.validate().is_err());
+    assert!(!invalid_descriptor.is_issuable());
+    assert!(!invalid_descriptor.is_verifiable());
+    assert!(
+        get_address(&[0_u8; SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE], sphincs_descriptor).is_err(),
+        "SPHINCS+ descriptor must not derive a common address"
+    );
+
+    assert!(matches!(WalletType::try_from(0), Err(QrllibError::UnknownWalletType(0))));
     assert!(matches!(WalletType::try_from(9), Err(QrllibError::UnknownWalletType(9))));
+    assert!(WalletType::MlDsa87.is_valid());
+    assert!(!WalletType::SphincsPlus256s.is_valid());
     assert_eq!(WalletType::MlDsa87.expected_public_key_size(), ML_DSA_87_PUBLIC_KEY_SIZE);
     assert_eq!(WalletType::SphincsPlus256s.expected_public_key_size(), 64);
     assert_eq!(WalletType::MlDsa87.to_string(), "ML_DSA_87");
@@ -195,10 +214,15 @@ fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
         MlDsa87Wallet::from_hex_extended_seed(&wallet_hex).expect("wallet from extended hex");
     assert_eq!(wallet.address(), wallet_from_extended_hex.address());
 
-    let sphincs_seed =
+    // `SPHINCSPLUS_256S` is not a valid common wallet descriptor
+    // (TOB-QRLLIB-4, parity with go-qrllib's `descriptor.Descriptor.IsValid`),
+    // so the common `ExtendedSeed` constructor refuses it outright rather
+    // than deferring the rejection to `MlDsa87Wallet::from_extended_seed`.
+    assert!(
         ExtendedSeed::new(Descriptor::new([WalletType::SphincsPlus256s.code(), 0, 0]), &seed)
-            .expect("sphincs extended seed");
-    assert!(MlDsa87Wallet::from_extended_seed(sphincs_seed).is_err());
+            .is_err(),
+        "SPHINCS+ descriptor must not produce a common extended seed"
+    );
 
     let mut zeroized_wallet = wallet_from_extended_hex;
     zeroized_wallet.zeroize();
@@ -206,20 +230,31 @@ fn wallet_api_covers_seed_imports_generation_verification_and_zeroization() {
     assert!(zeroized_wallet.secret_key().iter().all(|byte| *byte == 0));
 }
 
+/// The raw SPHINCS+ primitive is ungated — it stays available in every build.
 #[test]
-fn sphincs_public_and_wallet_api_cover_generation_imports() {
-    // Integration tests don't inherit qrllib's `cfg(test)` scope, so the
-    // SPHINCS+ wallet issuance gate (TOB-QRLLIB-4) sees the test build
-    // as a production build. Flip the runtime bypass before constructing
-    // any `SphincsPlus256sWallet` from this test.
-    enable_experimental_sphincsplus_issuance_for_testing();
-
+fn sphincs_primitive_covers_generation_and_imports() {
     let generated = SphincsPlus256s::generate().expect("generated signer");
     assert_eq!(generated.public_key_bytes().len(), SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE);
 
     let imported = SphincsPlus256s::from_hex_seed(&generated.hex_seed()).expect("imported signer");
     assert_eq!(generated.public_key_bytes(), imported.public_key_bytes());
     assert!(SphincsPlus256s::from_hex_seed("0x00").is_err());
+}
+
+/// The SPHINCS+ *wallet* path needs the gated issuance opt-in. The runtime
+/// helper is compiled only into debug builds or builds with
+/// `experimental-sphincsplus-issuance` (TOB-QRLLIB-4 / CIPH-RUSTQRL-6), and
+/// integration tests do not inherit the crate's own `cfg(test)` scope, so this
+/// test carries the same cfg and `cargo test --release` still compiles without
+/// the feature. Default `cargo test` and `cargo llvm-cov` are debug builds and
+/// run it as before.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
+#[test]
+fn sphincs_wallet_api_covers_generation_imports() {
+    use qrllib::{SphincsPlus256sWallet, enable_experimental_sphincsplus_issuance_for_testing};
+
+    // Flip the runtime bypass before constructing any wallet from this test.
+    enable_experimental_sphincsplus_issuance_for_testing();
 
     let seed = Seed::from_bytes(&[23_u8; SEED_SIZE]).expect("seed");
     let wallet = SphincsPlus256sWallet::from_hex_seed(&seed.to_hex_prefixed())
@@ -228,6 +263,28 @@ fn sphincs_public_and_wallet_api_cover_generation_imports() {
 
     let generated_wallet = SphincsPlus256sWallet::generate().expect("generated wallet");
     assert!(is_valid_address(&generated_wallet.address_string()));
+
+    // The extended-seed importers bypass the common descriptor policy (which
+    // rejects SPHINCS+) but still length-check their input, mirroring the raw
+    // `copy(extendedSeed[:], bin)` in go-qrllib's constructors.
+    assert!(SphincsPlus256sWallet::from_hex_extended_seed("0x00").is_err());
+    assert!(SphincsPlus256sWallet::from_hex_extended_seed("nothex").is_err());
+    assert!(SphincsPlus256sWallet::from_mnemonic("aback aback").is_err());
+
+    // A round trip through the SPHINCS+-specific extended-seed layout.
+    let hex_extended = wallet.hex_seed().expect("hex extended seed");
+    assert_eq!(
+        SphincsPlus256sWallet::from_hex_extended_seed(&hex_extended)
+            .expect("wallet from extended hex")
+            .address(),
+        wallet.address()
+    );
+    assert_eq!(
+        SphincsPlus256sWallet::from_mnemonic(&wallet.mnemonic().expect("mnemonic"))
+            .expect("wallet from mnemonic")
+            .address(),
+        wallet.address()
+    );
 }
 
 #[test]
@@ -239,4 +296,10 @@ fn error_messages_remain_human_readable() {
         QrllibError::InvalidMlDsaSeedSize(1, ML_DSA_87_CRYPTO_SEED_SIZE).to_string(),
         "invalid ML-DSA seed size 1, expected 32"
     );
+    // Sentinel exposed for parity with go-qrllib's
+    // `common.ErrWalletTypeNotVerifiable`.
+    let not_verifiable =
+        QrllibError::WalletTypeNotVerifiable(WalletType::SphincsPlus256s).to_string();
+    assert!(not_verifiable.contains("SPHINCSPLUS_256S"));
+    assert!(not_verifiable.contains("verification is gated"));
 }

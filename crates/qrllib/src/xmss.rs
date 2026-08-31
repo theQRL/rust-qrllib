@@ -24,21 +24,22 @@ pub const XMSS_WOTS_PARAM_N: u32 = 32;
 
 /// Hash-function selector for the XMSS construction.
 ///
-/// QRL's XMSS implementation **predates RFC 8391** (which standardised
-/// XMSS in August 2018) and is retained here as a v1 → v2 migration
-/// vehicle rather than as a standards-tracking XMSS implementation.
-/// The supported values reflect QRL's pre-standardisation choices; only
-/// `Sha2_256` and `Shake256` overlap with parameter sets published in
-/// RFC 8391 / NIST SP 800-208. See `SECURITY.md` for the full
-/// parameter-set provenance discussion (TOB-QRLLIB-7).
+/// QRL's XMSS implementation predates RFC 8391 (May 2018). The RFC
+/// later specified a closely aligned construction for the `Sha2_256`
+/// and `Shake256` parameter families; `Shake128` remains a QRL-specific
+/// pre-standardisation choice. The deployed derivation is retained so
+/// existing immutable QRL v1 keys continue to derive the same roots and
+/// addresses. See `SECURITY.md` for the full parameter-set provenance
+/// discussion (TOB-QRLLIB-7).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum XmssHashFunction {
     /// XMSS-SHA2_*_256 family — signature format matches RFC 8391
-    /// (August 2018). Note that the `expand_seed` construction here
-    /// follows the original RFC 8391 form, not the NIST SP 800-208
-    /// (October 2020) refinement; see `SECURITY.md` "Standards
-    /// alignment" for the rationale.
+    /// (May 2018). Private WOTS strings use the pseudorandom
+    /// derivation given as an example in RFC 8391, preserving QRL's
+    /// already-deployed key derivation. NIST SP 800-208 later selected
+    /// a different `PRFkeygen` construction for its stricter profile;
+    /// see `SECURITY.md` "XMSS provenance and standards alignment".
     Sha2_256 = 0,
 
     /// **QRL-specific extension, retained for legacy address
@@ -56,8 +57,8 @@ pub enum XmssHashFunction {
     Shake128 = 1,
 
     /// XMSS-SHAKE_*_256 family — signature format matches RFC 8391
-    /// (August 2018). Same `expand_seed`-vs-SP-800-208 caveat as
-    /// [`Sha2_256`]; see `SECURITY.md` "Standards alignment".
+    /// (May 2018). The same historical key-derivation scope as
+    /// [`XmssHashFunction::Sha2_256`] applies.
     Shake256 = 2,
 }
 
@@ -103,7 +104,13 @@ struct BdsState {
     retain: Vec<u8>,
 }
 
-/// A stateful RFC 8391 XMSS signer.
+/// A stateful QRL-compatible XMSS signer.
+///
+/// QRL deployed XMSS before RFC 8391. For the overlapping SHA2-256 and
+/// SHAKE256 parameter families, the signature construction and wire layout
+/// closely match the later RFC. This type also supports QRL-specific
+/// parameters, so use [`crate::xmss::rfc8391`] when RFC OID/public-key
+/// encoding and a deliberately bounded RFC parameter set are required.
 ///
 /// # XMSS statefulness — must read
 ///

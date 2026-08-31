@@ -4,7 +4,7 @@ use crate::{
     descriptor::Descriptor,
     error::{QrllibError, Result},
     mnemonic::{bin_to_mnemonic, mnemonic_to_bin},
-    seed::{ExtendedSeed, Seed},
+    seed::{ExtendedSeed, Seed, trim_hex_prefix},
     signing_context::{SIGNING_CONTEXT_SIZE, signing_context},
     sphincsplus::{
         SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
@@ -13,7 +13,90 @@ use crate::{
     },
     wallet_type::WalletType,
 };
+use core::sync::atomic::{AtomicBool, Ordering};
 use zeroize::{Zeroize, Zeroizing};
+
+/// Process-wide runtime override for the SPHINCS+ wallet gate.
+/// Set by [`enable_experimental_sphincsplus_issuance_for_testing`].
+static SPHINCSPLUS_EXPERIMENTAL: AtomicBool = AtomicBool::new(false);
+
+/// Enable the SPHINCS+/SLH-DSA wallet path for the lifetime of the
+/// current process. Intended for **test harnesses and developer
+/// experimentation**.
+///
+/// # Availability (CIPH-RUSTQRL-6 / go-qrllib CIPH-QRLLIB-2)
+///
+/// This helper is compiled **only** into debug builds
+/// (`debug_assertions`) or builds that enable the
+/// `experimental-sphincsplus-issuance` Cargo feature, so it is absent
+/// from a default release build and production code cannot link it.
+/// It mirrors Go's `wallet/sphincsplus_256s.EnableExperimentalForTesting`,
+/// which panics outside a `go test` binary for the same reason.
+///
+/// Cargo integration tests under `tests/` are downstream consumers that
+/// do **not** inherit qrllib's `cfg(test)` scope, so they must call this
+/// before constructing or verifying SPHINCS+ wallets:
+///
+/// ```ignore
+/// use qrllib::enable_experimental_sphincsplus_issuance_for_testing;
+///
+/// #[test]
+/// fn my_sphincs_wallet_test() {
+///     enable_experimental_sphincsplus_issuance_for_testing();
+///     // ... now SphincsPlus256sWallet::generate() etc. work.
+/// }
+/// ```
+///
+/// Once called, the override cannot be disabled within the same process —
+/// intentionally, so a misuse cannot accidentally undo a deliberate
+/// enable elsewhere.
+///
+/// The supported activation path for SLH-DSA is a change to
+/// [`WalletType::is_issuable`] / [`WalletType::is_verifiable`], not this
+/// helper. Wallets and signatures created through it may not be
+/// compatible with eventual activation, which may carry parameter-set or
+/// layout differences.
+#[cfg(any(debug_assertions, feature = "experimental-sphincsplus-issuance"))]
+pub fn enable_experimental_sphincsplus_issuance_for_testing() {
+    SPHINCSPLUS_EXPERIMENTAL.store(true, Ordering::Relaxed);
+}
+
+/// The package-local experimental opt-in, layered on top of the
+/// type-level gates exactly as Go's `experimental` package variable is.
+fn experimental() -> bool {
+    cfg!(any(test, feature = "experimental-sphincsplus-issuance"))
+        || SPHINCSPLUS_EXPERIMENTAL.load(Ordering::Relaxed)
+}
+
+/// Whether new SPHINCS+-256s wallets may be constructed today: the
+/// type-level gate, or the experimental opt-in. Parity with Go's
+/// `wallet/sphincsplus_256s.issuable`.
+///
+/// Gate first, opt-in second, so both operands are evaluated:
+/// `experimental()` is always true wherever this is reachable, so the other
+/// order would leave the gate untested.
+fn issuable() -> bool {
+    WalletType::SphincsPlus256s.is_issuable() || experimental()
+}
+
+/// Whether SPHINCS+-256s signatures may be verified today. Verification-side
+/// mirror of [`issuable`], including the operand order, and of Go's
+/// `wallet/sphincsplus_256s.verifiable`.
+fn verifiable() -> bool {
+    WalletType::SphincsPlus256s.is_verifiable() || experimental()
+}
+
+/// Package-local descriptor validity for the experimental SPHINCS+ path.
+///
+/// `SPHINCSPLUS_256S` is deliberately rejected by
+/// [`Descriptor::is_valid`], so this module cannot use the common check
+/// and applies its own — the same split Go draws between
+/// `descriptor.Descriptor.IsValid` and the package-local
+/// `sphincsplus_256s.Descriptor.IsValid`. Bytes 1 and 2 carry no defined
+/// semantics today and must be zero.
+fn descriptor_is_valid(descriptor: Descriptor) -> bool {
+    descriptor.type_code() == WalletType::SphincsPlus256s.code() && descriptor.metadata() == [0, 0]
+}
 
 /// QRL V2.0 SPHINCS+-256s wallet.
 ///
@@ -67,9 +150,14 @@ pub fn verify_sphincsplus_wallet_signature(
     public_key: &[u8],
     descriptor: Descriptor,
 ) -> bool {
-    if !descriptor.is_valid()
-        || !matches!(descriptor.wallet_type(), Ok(WalletType::SphincsPlus256s))
-    {
+    // Default builds refuse every SPHINCS+ signature, matching go-qrllib's
+    // `wallet/sphincsplus_256s.Verify`. Unreachable under test, where
+    // `experimental()` is always true.
+    if !verifiable() {
+        //coverage:ignore reason=defensively-unreachable
+        return false;
+    }
+    if !descriptor_is_valid(descriptor) {
         return false;
     }
 
@@ -81,21 +169,14 @@ impl SphincsPlus256sWallet {
     /// Issuance-gate check shared by every wallet constructor.
     ///
     /// Returns `Err(QrllibError::WalletTypeNotIssuable(...))` when
-    /// [`WalletType::SphincsPlus256s.is_issuable()`] is `false` —
-    /// i.e. when the `experimental-sphincsplus-issuance` Cargo feature
-    /// is not enabled and we are not in an in-crate test build.
-    /// (TOB-QRLLIB-4.)
+    /// [`issuable`] is `false` (TOB-QRLLIB-4).
     ///
-    /// Verification helpers and the raw [`SphincsPlus256s`] primitive
-    /// remain unrestricted; this gate applies only to *new wallet
-    /// creation* at the wallet layer.
+    /// The raw [`SphincsPlus256s`] primitive remains unrestricted; this
+    /// gate applies only to *new wallet creation* at the wallet layer.
     fn assert_issuable() -> Result<()> {
-        // Coverage: in an in-crate test build `WalletType::SphincsPlus256s
-        // .is_issuable()` is hard-wired `true` via `cfg!(any(test, ...))`, so the
-        // negated guard can never fire here; the `WalletTypeNotIssuable` error is
-        // reachable only from downstream (production) builds without the
-        // `experimental-sphincsplus-issuance` feature.
-        if !WalletType::SphincsPlus256s.is_issuable() {
+        // Unreachable under test, where `experimental()` is always true; the
+        // error is reachable only from default downstream builds.
+        if !issuable() {
             //coverage:ignore reason=defensively-unreachable
             return Err(QrllibError::WalletTypeNotIssuable(WalletType::SphincsPlus256s));
         }
@@ -130,8 +211,7 @@ impl SphincsPlus256sWallet {
 
     pub fn from_extended_seed(extended_seed: ExtendedSeed) -> Result<Self> {
         Self::assert_issuable()?;
-        let descriptor = extended_seed.descriptor();
-        if descriptor.wallet_type()? != WalletType::SphincsPlus256s {
+        if !descriptor_is_valid(extended_seed.descriptor()) {
             return Err(QrllibError::InvalidDescriptor);
         }
         Self::from_seed(extended_seed.seed())
@@ -139,14 +219,21 @@ impl SphincsPlus256sWallet {
 
     pub fn from_hex_extended_seed(value: &str) -> Result<Self> {
         Self::assert_issuable()?;
-        let extended_seed = ExtendedSeed::from_hex(value)?;
+        // `ExtendedSeed::from_hex` applies the production descriptor policy,
+        // which rejects SPHINCS+. Decode raw and let `from_extended_seed`
+        // apply this module's own descriptor rules instead — the same shape
+        // as Go's `NewWalletFromHexExtendedSeed`.
+        let bytes = Zeroizing::new(
+            hex::decode(trim_hex_prefix(value)).map_err(|_| QrllibError::InvalidHexSeed)?,
+        );
+        let extended_seed = ExtendedSeed::from_bytes_unchecked(&bytes)?;
         Self::from_extended_seed(extended_seed)
     }
 
     pub fn from_mnemonic(value: &str) -> Result<Self> {
         Self::assert_issuable()?;
         let bytes = mnemonic_to_bin(value)?;
-        let extended_seed = ExtendedSeed::from_bytes(&bytes)?;
+        let extended_seed = ExtendedSeed::from_bytes_unchecked(&bytes)?;
         Self::from_extended_seed(extended_seed)
     }
 
@@ -154,8 +241,17 @@ impl SphincsPlus256sWallet {
         self.seed.clone()
     }
 
+    /// SPHINCSPLUS_256S is intentionally not a valid common wallet
+    /// descriptor while the wallet path is gated (TOB-QRLLIB-4), so this
+    /// module cannot use [`ExtendedSeed::new`], which enforces the
+    /// production descriptor policy. Assemble the byte layout directly,
+    /// exactly as Go's `wallet/sphincsplus_256s.GetExtendedSeed` does.
     pub fn extended_seed(&self) -> Result<ExtendedSeed> {
-        ExtendedSeed::new(self.descriptor, &self.seed)
+        if !descriptor_is_valid(self.descriptor) {
+            //coverage:ignore reason=defensively-unreachable
+            return Err(QrllibError::InvalidDescriptor);
+        }
+        Ok(ExtendedSeed::from_parts_unchecked(self.descriptor, &self.seed))
     }
 
     pub fn hex_seed(&self) -> Result<String> {
@@ -268,10 +364,15 @@ mod tests {
                 .address(),
             wallet.address()
         );
-        assert_eq!(
-            ExtendedSeed::from_hex(&hex_seed).expect("extended seed from hex"),
-            extended_seed
+        // The common `ExtendedSeed` constructors enforce the production
+        // descriptor policy, which rejects SPHINCS+ (TOB-QRLLIB-4, parity
+        // with go-qrllib). This module lays the bytes out itself, so check
+        // the round trip against the wallet's own hex rendering instead.
+        assert!(
+            ExtendedSeed::from_hex(&hex_seed).is_err(),
+            "SPHINCS+ extended seed must not parse through the common policy check"
         );
+        assert_eq!(extended_seed.to_hex_prefixed(), hex_seed);
     }
 
     #[test]
@@ -337,6 +438,14 @@ mod tests {
         let mldsa_seed = ExtendedSeed::new(crate::Descriptor::mldsa87(), &wallet.seed())
             .expect("mldsa extended seed");
         assert!(SphincsPlus256sWallet::from_extended_seed(mldsa_seed).is_err());
+
+        // A SPHINCS+ descriptor carrying non-zero metadata bytes is not a
+        // well-formed descriptor for this module either.
+        let non_canonical = ExtendedSeed::from_parts_unchecked(
+            crate::Descriptor::new([crate::WalletType::SphincsPlus256s.code(), 0x01, 0x00]),
+            &wallet.seed(),
+        );
+        assert!(SphincsPlus256sWallet::from_extended_seed(non_canonical).is_err());
     }
 
     #[test]
