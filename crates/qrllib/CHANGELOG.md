@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.5](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.4...qrllib-v0.1.5) - 2026-08-31
+
+### Fixed
+
+- coverage
+- coderabbit nits
+- parity with go-qrllib and ci enhancements
+
+### Other
+
+- align with go-qrllib
+
 ## [0.1.4](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.3...qrllib-v0.1.4) - 2026-07-06
 
 ### Security
