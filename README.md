@@ -87,7 +87,7 @@ Common wallet accessors:
 
 | Type | Accessors |
 |------|-----------|
-| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `checksum_address_string`, `sign` (hedged), `sign_deterministic`, `zeroize` |
+| `MlDsa87Wallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key` (validated `MlDsa87PublicKey`), `public_key_bytes`, `secret_key`, `address`, `address_string`, `checksum_address_string`, `sign` (hedged), `sign_deterministic`, `zeroize` |
 | `SphincsPlus256sWallet` | `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `descriptor`, `public_key`, `secret_key`, `address`, `address_string`, `sign`, `sign_attached`, `zeroize` |
 | `LegacyXmssWallet` | `height`, `seed`, `extended_seed`, `hex_seed`, `mnemonic`, `root`, `public_key`, `secret_key`, `address`, `index`, `set_index`, `sign`, `descriptor`, `zeroize` |
 
@@ -176,7 +176,7 @@ Common low-level methods:
 
 | Type | Constructors and accessors |
 |------|---------------------------|
-| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
+| `MlDsa87` | `generate`, `from_seed`, `from_hex_seed`, `public_key` (validated `MlDsa87PublicKey`), `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign` (hedged), `sign_deterministic`, `sign_attached`, `sign_attached_deterministic`, `verify`, `zeroize` |
 | `SphincsPlus256s` | `generate`, `from_seed`, `from_hex_seed`, `public_key_bytes`, `secret_key_bytes`, `seed`, `hex_seed`, `sign`, `sign_attached`, `zeroize` |
 | `Xmss` | `initialize_tree`, `seed`, `secret_key`, `public_seed`, `root`, `public_key`, `hash_function`, `height`, `index`, `set_index`, `sign`, `zeroize` |
 
@@ -184,13 +184,39 @@ Low-level verification and sealed-message helpers:
 
 | API | Purpose |
 |-----|---------|
-| `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context |
+| `mldsa::PublicKey` (`MlDsa87PublicKey` at the crate root) | Validated ML-DSA-87 public key, the only type the ML-DSA-87 verify and open helpers accept. `from_bytes` rejects a wrong-length encoding and a weak key (see below) |
+| `validate_mldsa_public_key` | The same check (length, then the weak-key rule) for callers holding raw key bytes; applied by `PublicKey::from_bytes` and key generation |
+| `validate_mldsa_secret_key` | Length, then the s1/s2 encoding check every signing path applies (a 3-bit field of 5, 6 or 7 never comes from key generation and is rejected as `InvalidMlDsaSecretKeyEncoding`); for callers holding raw secret-key bytes |
+| `mldsa::verify_bytes` | Verify ML-DSA-87 with explicit FIPS 204 context; takes a validated `mldsa::PublicKey`, never raw bytes |
 | `sign_mldsa_with_secret_key` | Stateless ML-DSA-87 secret-key signing with explicit FIPS 204 context (hedged by default per FIPS 204 §3.4 — TOB-QRLLIB-6) |
 | `sign_mldsa_with_secret_key_deterministic` | FIPS 204 §3.5 deterministic-mode opt-in (use for RANDAO-style protocols and KAT vector reproduction) |
 | `open`, `extract_message`, `extract_signature` | ML-DSA-87 attached-signature helpers |
 | `verify_sphincsplus_signature` | Verify detached SPHINCS+ signatures |
 | `sphincsplus_open`, `sphincsplus_extract_message`, `sphincsplus_extract_signature` | SPHINCS+ attached-signature helpers |
 | `verify_xmss`, `verify_xmss_with_custom_wots_param_w` | Verify lower-level XMSS signatures |
+
+#### ML-DSA-87 public-key validation
+
+`verify_bytes`, `open` and `verify_mldsa87_wallet_signature` take a
+`mldsa::PublicKey` (`qrllib::MlDsa87PublicKey` at the root), never raw bytes.
+The only ways to get one are `PublicKey::from_bytes` and a signer or wallet's
+`public_key()`, and both reject a wrong-length encoding and a weak key: one
+under which the verifier would accept a signature anyone can compute from the
+key alone. Key generation never produces a weak key. FIPS 204 requires the
+verifier itself to accept such keys (Wycheproof tcId 66, 174 and 240), so the check
+runs at key construction and the primitive is unchanged. The rustdoc for
+`mldsa::validate_mldsa_public_key` states the rule and its derivation;
+go-qrllib, qrypto.js and wallet.js apply the same rule and share the same test
+vectors.
+
+```rust
+use qrllib::{MlDsa87PublicKey, QrllibError, mldsa::verify_bytes};
+
+fn verify_from_wire(pk: &[u8], ctx: &[u8], msg: &[u8], sig: &[u8]) -> Result<bool, QrllibError> {
+    let public_key = MlDsa87PublicKey::from_bytes(pk)?; // rejects a bad length and a weak key
+    verify_bytes(ctx, msg, sig, &public_key)
+}
+```
 
 ### Key Encapsulation (ML-KEM-1024)
 

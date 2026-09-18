@@ -10,7 +10,7 @@ The GitHub Action (`.github/workflows/acvp.yml`) clones the NIST ACVP-Server rep
 
 1. **Clone**: Sparse checkout of `github.com/usnistgov/ACVP-Server` (only the ML-DSA JSON files)
 2. **Merge**: `merge_vectors.py` combines the ACVP `prompt.json` (inputs) and `expectedResults.json` (expected outputs) into simplified test vector files, filtered to ML-DSA-87
-3. **Test**: `crates/qrllib/tests/acvp_mldsa.rs` runs the vectors through Rust key generation and signing functions, comparing byte-exact output
+3. **Test**: the in-crate `mldsa::acvp` module (`crates/qrllib/src/mldsa/acvp.rs`) runs the vectors through Rust key generation and signing functions, comparing byte-exact output, and additionally checks that every NIST-generated public key passes `validate_mldsa_public_key` (validation must never reject an honest key)
 
 **ML-KEM-1024:**
 
@@ -21,8 +21,8 @@ The GitHub Action (`.github/workflows/acvp.yml`) clones the NIST ACVP-Server rep
 
 | Test | Vectors | Description |
 |------|---------|-------------|
-| `acvp_keygen` (ML-DSA-87) | 25 | Seed -> (pk, sk) matches NIST expected output |
-| `acvp_siggen` (ML-DSA-87) | 15 | sk + message + context -> signature matches NIST expected output |
+| `mldsa::acvp::acvp_keygen_matches_nist_vectors` (ML-DSA-87) | 25 | Seed -> (pk, sk) matches NIST expected output; pk passes `validate_mldsa_public_key` |
+| `mldsa::acvp::acvp_siggen_matches_nist_vectors` (ML-DSA-87) | 15 | sk + message + context -> signature matches NIST expected output |
 | `acvp_keygen_matches_nist_vectors` (ML-KEM-1024) | 25 | seed (d‖z) -> (ek, expanded dk) matches NIST expected output |
 | `acvp_encap_decap_matches_nist_vectors` (ML-KEM-1024) | 55 | encapsulation (25), decapsulation (10), decapsulationKeyCheck (10), encapsulationKeyCheck (10) |
 
@@ -44,7 +44,7 @@ python3 .github/acvp/merge_vectors.py \
   --output-dir /tmp/acvp-vectors
 
 # Run the tests
-ACVP_VECTORS_DIR=/tmp/acvp-vectors cargo test --test acvp_mldsa -- --nocapture
+ACVP_VECTORS_DIR=/tmp/acvp-vectors cargo test --package qrllib --lib 'mldsa::acvp::' -- --nocapture
 ```
 
 For ML-KEM-1024 the raw NIST format is consumed directly (no merge step):
@@ -61,7 +61,7 @@ git checkout && cd -
 
 # Run the tests (MLKEM_ACVP_VECTORS_DIR points at the dir holding the two suites)
 MLKEM_ACVP_VECTORS_DIR=/tmp/acvp-server/gen-val/json-files \
-  cargo test --package qrllib --lib 'acvp::' -- --nocapture
+  cargo test --package qrllib --lib 'mlkem::acvp::' -- --nocapture
 ```
 
 ## Why Not the Other Algorithms?

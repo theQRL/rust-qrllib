@@ -8,8 +8,8 @@ fn main() -> ExitCode {
         *byte = index as u8;
     }
 
-    let signer = MlDsa87::from_seed(seed);
-    let public_key = signer.public_key_bytes();
+    let signer = MlDsa87::from_seed(seed).expect("key generation");
+    let public_key = signer.public_key();
     let context = b"test";
     let message = b"ML-DSA-87 cross-implementation verification";
     let signature = match signer.sign(context, message) {
@@ -32,13 +32,13 @@ fn main() -> ExitCode {
         }
     }
 
-    fs::write("/tmp/mldsa_pk.bin", public_key).expect("write public key");
+    fs::write("/tmp/mldsa_pk.bin", public_key.as_bytes()).expect("write public key");
     fs::write("/tmp/mldsa_sig.bin", signature).expect("write signature");
     fs::write("/tmp/mldsa_msg.bin", message).expect("write message");
     fs::write("/tmp/mldsa_ctx.bin", context).expect("write context");
 
     println!("rust-qrllib ML-DSA-87:");
-    println!("  PK size:  {} bytes", public_key.len());
+    println!("  PK size:  {} bytes", public_key.as_bytes().len());
     println!("  Sig size: {} bytes", signature.len());
     println!("  Context:  {}", String::from_utf8_lossy(context));
     println!("  Self-verify: PASSED");

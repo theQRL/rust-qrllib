@@ -52,7 +52,7 @@ fn mldsa_wallet_sign_randomized_varies_and_verifies() {
 #[test]
 fn free_function_randomised_sign_entry_points_are_exposed() {
     // ML-DSA
-    let mldsa = MlDsa87::from_seed([23_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+    let mldsa = MlDsa87::from_seed([23_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
     let sig_a = sign_mldsa_with_secret_key(b"ctx", b"msg", mldsa.secret_key_bytes().as_slice())
         .expect("randomized mldsa a");
     let sig_b = sign_mldsa_with_secret_key(b"ctx", b"msg", mldsa.secret_key_bytes().as_slice())

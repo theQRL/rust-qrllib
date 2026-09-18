@@ -64,10 +64,12 @@ jobs:
           python3 -c "import json; d=json.load(open('/tmp/acvp-vectors/siggen.json')); print(f'  {len(d)} test cases')"
 
       - name: Run ACVP tests
+        # The ML-DSA-87 harness lives in-crate (`mldsa::acvp`) alongside the
+        # Wycheproof one; filter to that module.
         env:
           ACVP_VECTORS_DIR: /tmp/acvp-vectors
         run: |
-          cargo test --locked --test acvp_mldsa -- --nocapture
+          cargo test --locked --package qrllib --lib 'mldsa::acvp::' -- --nocapture
 
   mlkem1024-acvp:
     name: ML-KEM-1024 ACVP Verification
@@ -105,8 +107,8 @@ jobs:
         # directly (no merge step), so point MLKEM_ACVP_VECTORS_DIR at the
         # directory holding the two suite subfolders. They live in-crate as lib
         # unit tests (the decapsulation cases need the expanded-key form), so
-        # filter to the `acvp::` module.
+        # filter to the `mlkem::acvp::` module.
         env:
           MLKEM_ACVP_VECTORS_DIR: /tmp/acvp-server/gen-val/json-files
         run: |
-          cargo test --locked --package qrllib --lib 'acvp::' -- --nocapture
+          cargo test --locked --package qrllib --lib 'mlkem::acvp::' -- --nocapture

@@ -25,7 +25,7 @@ const SECRET_MARK: &str = "171";
 fn secret_bearing_debug_is_redacted() {
     let seed = Seed::from_bytes(&[SECRET_BYTE; SEED_SIZE]).expect("seed");
     let extended = ExtendedSeed::new(Descriptor::mldsa87(), &seed).expect("extended seed");
-    let mldsa = MlDsa87::from_seed([SECRET_BYTE; ML_DSA_87_CRYPTO_SEED_SIZE]);
+    let mldsa = MlDsa87::from_seed([SECRET_BYTE; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
     let sphincs = SphincsPlus256s::from_seed([SECRET_BYTE; SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE]);
     let mldsa_wallet = MlDsa87Wallet::from_seed(seed.clone()).expect("ml-dsa wallet");
     let legacy_wallet =

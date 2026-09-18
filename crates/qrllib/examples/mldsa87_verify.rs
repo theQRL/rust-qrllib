@@ -1,6 +1,9 @@
 use std::{fs, process::ExitCode};
 
-use qrllib::{ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, mldsa::verify_bytes};
+use qrllib::{
+    ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE,
+    mldsa::{PublicKey, verify_bytes},
+};
 
 fn main() -> ExitCode {
     let public_key = fs::read("/tmp/ref_mldsa_pk.bin").expect("read public key");
@@ -25,6 +28,16 @@ fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    // Key validation is a separate step from FIPS 204 verification: a key it
+    // rejects (wrong length or weak key) never reaches the verifier.
+    let public_key = match PublicKey::from_bytes(&public_key) {
+        Ok(public_key) => public_key,
+        Err(error) => {
+            eprintln!("public key rejected: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+
     let valid = match verify_bytes(&context, &message, &signature, &public_key) {
         Ok(valid) => valid,
         Err(error) => {
@@ -34,7 +47,7 @@ fn main() -> ExitCode {
     };
 
     println!("rust-qrllib ML-DSA-87 verifier:");
-    println!("  PK size:  {} bytes", public_key.len());
+    println!("  PK size:  {} bytes", public_key.as_bytes().len());
     println!("  Sig size: {} bytes", signature.len());
     println!("  Context:  {}", String::from_utf8_lossy(&context));
     println!("  Verification: {}", if valid { "PASSED" } else { "FAILED" });

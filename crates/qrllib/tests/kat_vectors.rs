@@ -67,8 +67,8 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
         let message = decode_hex_vec(vector.message);
         let context = decode_hex_vec(vector.context);
 
-        let signer_a = MlDsa87::from_seed(seed);
-        let signer_b = MlDsa87::from_seed(seed);
+        let signer_a = MlDsa87::from_seed(seed).expect("signer");
+        let signer_b = MlDsa87::from_seed(seed).expect("signer");
         assert_eq!(signer_a.public_key_bytes(), signer_b.public_key_bytes(), "{}", vector.name);
         assert_eq!(signer_a.secret_key_bytes(), signer_b.secret_key_bytes(), "{}", vector.name);
 
@@ -80,14 +80,12 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
         let signature_a = signer_a.sign_deterministic(&context, &message).expect("signature a");
         let signature_b = signer_a.sign_deterministic(&context, &message).expect("signature b");
         assert!(
-            verify_bytes(&context, &message, &signature_a, &signer_a.public_key_bytes())
-                .expect("verify"),
+            verify_bytes(&context, &message, &signature_a, &signer_a.public_key()).expect("verify"),
             "{}",
             vector.name
         );
         assert!(
-            verify_bytes(&context, &message, &signature_b, &signer_a.public_key_bytes())
-                .expect("verify"),
+            verify_bytes(&context, &message, &signature_b, &signer_a.public_key()).expect("verify"),
             "{}",
             vector.name
         );
@@ -107,7 +105,7 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
             vector.name
         );
         assert_eq!(
-            open(&context, &sealed, &signer_a.public_key_bytes()).expect("open").expect("opened"),
+            open(&context, &sealed, &signer_a.public_key()).expect("open").expect("opened"),
             message,
             "{}",
             vector.name
@@ -121,7 +119,7 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
             tampered
         };
         assert!(
-            !verify_bytes(&context, &wrong_message, &signature_a, &signer_a.public_key_bytes())
+            !verify_bytes(&context, &wrong_message, &signature_a, &signer_a.public_key())
                 .expect("verify wrong message"),
             "{}",
             vector.name
@@ -131,7 +129,7 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
             let mut wrong_context = context.clone();
             wrong_context[0] ^= 0xff;
             assert!(
-                !verify_bytes(&wrong_context, &message, &signature_a, &signer_a.public_key_bytes())
+                !verify_bytes(&wrong_context, &message, &signature_a, &signer_a.public_key())
                     .expect("verify wrong context"),
                 "{}",
                 vector.name
@@ -141,12 +139,12 @@ fn mldsa_known_answer_vectors_cover_deterministic_api_contracts() {
 
     let seed_a = decode_hex_array::<32>(MLDSA_KAT_VECTORS[0].seed);
     let seed_b = decode_hex_array::<32>(MLDSA_KAT_VECTORS[1].seed);
-    let signer_a = MlDsa87::from_seed(seed_a);
-    let signer_b = MlDsa87::from_seed(seed_b);
+    let signer_a = MlDsa87::from_seed(seed_a).expect("signer");
+    let signer_b = MlDsa87::from_seed(seed_b).expect("signer");
     assert_ne!(signer_a.public_key_bytes(), signer_b.public_key_bytes());
     assert_ne!(signer_a.secret_key_bytes(), signer_b.secret_key_bytes());
 
-    let mut zeroized = MlDsa87::from_seed(seed_a);
+    let mut zeroized = MlDsa87::from_seed(seed_a).expect("signer");
     zeroized.zeroize();
     assert!(zeroized.seed().iter().all(|byte| *byte == 0));
     assert!(zeroized.secret_key_bytes().iter().all(|byte| *byte == 0));

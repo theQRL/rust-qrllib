@@ -67,7 +67,11 @@ jobs:
       - name: Install cargo-llvm-cov
         run: cargo install cargo-llvm-cov --version 0.8.5 --locked
 
-      - name: Clone NIST ACVP-Server (ML-KEM vectors)
+      # The in-crate conformance harnesses (`mlkem::acvp`, `mldsa::acvp`,
+      # `mldsa::wycheproof`) are vector-gated: without their vectors present
+      # the harness bodies skip and report as uncovered, and the 100% gate
+      # fails. Fetch all three corpora exactly as acvp.yml / wycheproof.yml do.
+      - name: Clone NIST ACVP-Server (ML-DSA + ML-KEM vectors)
         env:
           ACVP_REF: 15c0f3deeefbfa8cb6cd32a99e1ca3b738c66bf0 # v1.1.0.42
         run: |
@@ -76,14 +80,38 @@ jobs:
           git remote add origin https://github.com/usnistgov/ACVP-Server.git
           git sparse-checkout init --cone
           git sparse-checkout set \
+            gen-val/json-files/ML-DSA-keyGen-FIPS204 \
+            gen-val/json-files/ML-DSA-sigGen-FIPS204 \
             gen-val/json-files/ML-KEM-keyGen-FIPS203 \
             gen-val/json-files/ML-KEM-encapDecap-FIPS203
           git fetch --depth 1 --filter=blob:none origin "$ACVP_REF"
           git checkout "$ACVP_REF"
 
+      - name: Extract and merge ML-DSA-87 ACVP vectors
+        run: |
+          python3 .github/acvp/merge_vectors.py \
+            --keygen-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-keyGen-FIPS204/prompt.json \
+            --keygen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-keyGen-FIPS204/expectedResults.json \
+            --siggen-prompt /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/prompt.json \
+            --siggen-results /tmp/acvp-server/gen-val/json-files/ML-DSA-sigGen-FIPS204/expectedResults.json \
+            --parameter-set ML-DSA-87 \
+            --output-dir /tmp/acvp-vectors
+
+      - name: Clone C2SP/wycheproof (sparse)
+        run: |
+          git clone --depth 1 --no-checkout --filter=blob:none \
+            https://github.com/C2SP/wycheproof.git /tmp/wycheproof
+          cd /tmp/wycheproof
+          git sparse-checkout init --cone
+          git sparse-checkout set testvectors_v1
+          git checkout
+          echo "Wycheproof commit: $(git rev-parse --short HEAD)"
+
       - name: Generate coverage report
         env:
           MLKEM_ACVP_VECTORS_DIR: /tmp/acvp-server/gen-val/json-files
+          ACVP_VECTORS_DIR: /tmp/acvp-vectors
+          WYCHEPROOF_VECTORS_DIR: /tmp/wycheproof/testvectors_v1
         run: cargo llvm-cov --locked --package qrllib --lcov --output-path lcov.info
 
       - name: Filter ignored code from coverage

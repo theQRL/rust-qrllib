@@ -18,8 +18,24 @@
 
 use qrllib::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    QrllibError, mldsa::verify_bytes, open,
+    QrllibError,
+    mldsa::{PublicKey, verify_bytes},
+    open,
 };
+
+/// Verify under raw public-key bytes with the wallet-layer contract: a key
+/// that validation rejects (wrong length or weak key) never verifies
+/// anything, and a key it accepts is handed to the FIPS 204 verifier.
+fn verify_with_raw_pk(ctx: &[u8], message: &[u8], signature: &[u8], pk: &[u8]) -> bool {
+    PublicKey::from_bytes(pk)
+        .map(|pk| verify_bytes(ctx, message, signature, &pk).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// `open` counterpart of [`verify_with_raw_pk`].
+fn open_with_raw_pk(ctx: &[u8], sealed: &[u8], pk: &[u8]) -> Option<Vec<u8>> {
+    PublicKey::from_bytes(pk).ok().and_then(|pk| open(ctx, sealed, &pk).unwrap_or(None))
+}
 
 /// Hand-curated seed corpus mirroring the Go-side `f.Add(...)` entries:
 /// covers all-zero, all-`0xFF`, and short / arbitrary seeds.
@@ -93,11 +109,12 @@ fn mutate_array<const N: usize>(base: &[u8; N], mutation: (u32, u8)) -> [u8; N] 
 fn mldsa87_sign_verify_round_trip_mutate() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let signature = signer
                 .sign(&ctx, &message)
                 .unwrap_or_else(|e| panic!("sign with ctx_len={}: {:?}", ctx.len(), e));
-            let pk = signer.public_key_bytes();
+            let pk_bytes = signer.public_key_bytes();
+            let pk = signer.public_key();
 
             assert!(
                 verify_bytes(&ctx, &message, &signature, &pk).expect("verify"),
@@ -130,9 +147,9 @@ fn mldsa87_sign_verify_round_trip_mutate() {
             );
 
             // Mutated public key → reject.
-            let mutated_pk = mutate_array(&pk, mutation);
+            let mutated_pk = mutate_array(&pk_bytes, mutation);
             assert!(
-                !verify_bytes(&ctx, &message, &signature, &mutated_pk).expect("verify mutated pk"),
+                !verify_with_raw_pk(&ctx, &message, &signature, &mutated_pk),
                 "verify accepted mutated public key"
             );
         }
@@ -145,9 +162,10 @@ fn mldsa87_sign_verify_round_trip_mutate() {
 fn mldsa87_sign_attached_open_round_trip_mutate() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let sealed = signer.sign_attached(&ctx, &message).expect("sign_attached");
-            let pk = signer.public_key_bytes();
+            let pk_bytes = signer.public_key_bytes();
+            let pk = signer.public_key();
 
             let opened =
                 open(&ctx, &sealed, &pk).expect("open").expect("open did not recover message");
@@ -170,9 +188,9 @@ fn mldsa87_sign_attached_open_round_trip_mutate() {
             );
 
             // Mutated public key → Open fails.
-            let mutated_pk = mutate_array(&pk, mutation);
+            let mutated_pk = mutate_array(&pk_bytes, mutation);
             assert!(
-                open(&ctx, &sealed, &mutated_pk).expect("open").is_none(),
+                open_with_raw_pk(&ctx, &sealed, &mutated_pk).is_none(),
                 "Open succeeded with mutated public key"
             );
         }
@@ -185,7 +203,7 @@ fn mldsa87_sign_attached_open_round_trip_mutate() {
 #[test]
 fn mldsa87_from_hex_seed_round_trips() {
     for seed in corpus_seeds() {
-        let signer = MlDsa87::from_seed(seed);
+        let signer = MlDsa87::from_seed(seed).expect("signer");
         let hex_seed = signer.hex_seed();
         let round_trip = MlDsa87::from_hex_seed(&hex_seed).expect("round-trip hex seed must parse");
         assert_eq!(
@@ -198,7 +216,7 @@ fn mldsa87_from_hex_seed_round_trips() {
         let message = b"hex-seed-round-trip-message";
         let signature = round_trip.sign(b"ctx", message).expect("sign via round-trip");
         assert!(
-            verify_bytes(b"ctx", message, &signature, &signer.public_key_bytes()).expect("verify"),
+            verify_bytes(b"ctx", message, &signature, &signer.public_key()).expect("verify"),
             "signature from round-trip signer did not verify under original pk"
         );
 
@@ -221,16 +239,16 @@ fn mldsa87_from_hex_seed_round_trips() {
 fn metamorphic_verify_rejects_mauled_public_key() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let signature = signer.sign(&ctx, &message).expect("sign");
-            let pk = signer.public_key_bytes();
-            assert!(verify_bytes(&ctx, &message, &signature, &pk).expect("baseline"));
+            let pk_bytes = signer.public_key_bytes();
+            assert!(verify_with_raw_pk(&ctx, &message, &signature, &pk_bytes), "baseline");
 
-            let mauled = flip_single_bit(&pk, mutation.0);
+            let mauled = flip_single_bit(&pk_bytes, mutation.0);
             let mut mauled_pk = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
             mauled_pk.copy_from_slice(&mauled);
             assert!(
-                !verify_bytes(&ctx, &message, &signature, &mauled_pk).unwrap_or(false),
+                !verify_with_raw_pk(&ctx, &message, &signature, &mauled_pk),
                 "single-bit-mauled public key verified (bit={})",
                 mutation.0
             );
@@ -243,9 +261,9 @@ fn metamorphic_verify_rejects_mauled_public_key() {
 fn metamorphic_verify_rejects_mauled_message() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let signature = signer.sign(&ctx, &message).expect("sign");
-            let pk = signer.public_key_bytes();
+            let pk = signer.public_key();
             assert!(verify_bytes(&ctx, &message, &signature, &pk).expect("baseline"));
 
             let mauled_msg = flip_single_bit(&message, mutation.0);
@@ -264,9 +282,9 @@ fn metamorphic_verify_rejects_mauled_message() {
 fn metamorphic_verify_rejects_mauled_signature() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let signature = signer.sign(&ctx, &message).expect("sign");
-            let pk = signer.public_key_bytes();
+            let pk = signer.public_key();
             assert!(verify_bytes(&ctx, &message, &signature, &pk).expect("baseline"));
 
             let mauled = flip_single_bit(&signature, mutation.0);
@@ -289,7 +307,7 @@ fn metamorphic_verify_rejects_mauled_signature() {
 fn metamorphic_deterministic_signing_changes_on_mauled_message() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let base_sig = signer.sign_deterministic(&ctx, &message).expect("base");
 
             let mauled_msg = flip_single_bit(&message, mutation.0);
@@ -311,9 +329,9 @@ fn metamorphic_deterministic_signing_changes_on_mauled_message() {
 fn metamorphic_open_rejects_mauled_attached_signature() {
     for seed in corpus_seeds() {
         for (ctx, message, mutation) in corpus_inputs() {
-            let signer = MlDsa87::from_seed(seed);
+            let signer = MlDsa87::from_seed(seed).expect("signer");
             let sealed = signer.sign_attached(&ctx, &message).expect("sign_attached");
-            let pk = signer.public_key_bytes();
+            let pk = signer.public_key();
 
             let opened = open(&ctx, &sealed, &pk).expect("baseline open").expect("baseline msg");
             assert_eq!(opened, message, "baseline sealed message did not round-trip");

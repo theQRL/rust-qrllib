@@ -49,10 +49,14 @@ jobs:
           ls -la testvectors_v1/mldsa_87_*.json
 
       - name: Run Wycheproof ML-DSA-87 tests
+        # The harness lives in-crate (`mldsa::wycheproof`) so it can drive the
+        # FIPS 204 primitive with the `ZeroPublicKey` (all-zero t1) and
+        # `MissingReduction` (all-1023 t1) keys, which are weak keys the public
+        # `PublicKey::from_bytes` rejects; filter to that module.
         env:
           WYCHEPROOF_VECTORS_DIR: /tmp/wycheproof/testvectors_v1
         run: |
-          cargo test --locked --package qrllib --test wycheproof_mldsa -- --nocapture
+          cargo test --locked --package qrllib --lib 'mldsa::wycheproof::' -- --nocapture
 
   mlkem1024-wycheproof:
     name: ML-KEM-1024 Wycheproof / CCTV Verification

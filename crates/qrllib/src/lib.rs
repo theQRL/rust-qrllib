@@ -28,8 +28,8 @@ pub use legacy_xmss::{
 };
 pub use mldsa::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
-    ML_DSA_87_SIGNATURE_SIZE, MlDsa87, extract_message, extract_signature, open,
-    sign_with_secret_key as sign_mldsa_with_secret_key,
+    ML_DSA_87_SIGNATURE_SIZE, MlDsa87, PublicKey as MlDsa87PublicKey, extract_message,
+    extract_signature, open, sign_with_secret_key as sign_mldsa_with_secret_key,
     sign_with_secret_key_deterministic as sign_mldsa_with_secret_key_deterministic,
     validate_mldsa_public_key, validate_mldsa_secret_key,
 };

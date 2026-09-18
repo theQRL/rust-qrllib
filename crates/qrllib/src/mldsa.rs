@@ -1,3 +1,14 @@
+//! FIPS 204 ML-DSA-87: key generation, signing, and verification.
+//!
+//! # Public-key validation
+//!
+//! [`verify_bytes`], [`open`] and [`crate::verify_mldsa87_wallet_signature`]
+//! take a [`PublicKey`], which can only come from [`PublicKey::from_bytes`] or
+//! [`MlDsa87::public_key`]. Both call [`validate_mldsa_public_key`], which
+//! rejects weak keys, so every key that reaches a verifier has been
+//! validated. The FIPS 204 primitive underneath does no key validation, as
+//! the standard specifies; see [`validate_mldsa_public_key`] for the rule.
+
 use crate::{
     error::{QrllibError, Result},
     lattice::{
@@ -8,6 +19,22 @@ use crate::{
 use sha3::digest::{ExtendableOutput, Update, XofReader};
 use shake::{Shake128, Shake256};
 use zeroize::{Zeroize, Zeroizing};
+
+// The NIST ACVP and C2SP/wycheproof conformance harnesses and the shared
+// weak-key vector tests live in-crate so they can drive the FIPS 204
+// primitive with arbitrary keys through the `#[cfg(test)]`-only
+// `PublicKey::from_bytes_unchecked` (the wycheproof `ZeroPublicKey` and
+// `MissingReduction` vectors need weak keys to verify). The two conformance
+// harnesses are vector-gated by environment variable and skip when it is
+// unset; the weak-key vectors are vendored under `mldsa/testdata/`.
+#[cfg(test)]
+mod acvp;
+#[cfg(test)]
+mod secret_keys;
+#[cfg(test)]
+mod weak_keys;
+#[cfg(test)]
+mod wycheproof;
 
 pub const ML_DSA_87_CRYPTO_SEED_SIZE: usize = 32;
 pub const ML_DSA_87_PUBLIC_KEY_SIZE: usize = ML_DSA_87_CRYPTO_SEED_SIZE + K * POLY_T1_PACKED_BYTES;
@@ -103,6 +130,71 @@ impl core::fmt::Debug for MlDsa87 {
     }
 }
 
+/// A validated ML-DSA-87 public key (`rho || t1`,
+/// [`ML_DSA_87_PUBLIC_KEY_SIZE`] bytes).
+///
+/// Outside this crate a `PublicKey` can only come from
+/// [`PublicKey::from_bytes`] or [`MlDsa87::public_key`], both of which call
+/// [`validate_mldsa_public_key`] and so never hold a weak key. The field is
+/// private, so the type cannot be built around unvalidated bytes, and
+/// [`verify_bytes`] / [`open`] / [`crate::verify_mldsa87_wallet_signature`]
+/// need no further check.
+///
+/// The FIPS 204 primitive underneath does no key validation. The in-crate
+/// conformance harnesses build a `PublicKey` through a `#[cfg(test)]`-only
+/// constructor so they can drive it on arbitrary keys, including the weak
+/// keys the C2SP/wycheproof `ZeroPublicKey` and `MissingReduction` vectors
+/// require it to accept. Downstream crates cannot reach that path.
+///
+/// Equality is a constant-time comparison of the packed bytes, like
+/// go-qrllib's `PublicKey.Equal`.
+#[derive(Clone, Debug)]
+pub struct PublicKey {
+    packed: [u8; ML_DSA_87_PUBLIC_KEY_SIZE],
+}
+
+impl PublicKey {
+    /// Decodes and validates a packed public key (`rho || t1`).
+    ///
+    /// Returns [`QrllibError::InvalidPublicKeySize`] for a wrong-length input
+    /// and [`QrllibError::WeakPublicKey`] for a weak key (see
+    /// [`validate_mldsa_public_key`]).
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        validate_mldsa_public_key(bytes)?;
+        let mut packed = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
+        packed.copy_from_slice(bytes);
+        Ok(Self { packed })
+    }
+
+    /// Wraps packed bytes without validation. Test-only: the Wycheproof and
+    /// ACVP harnesses and the weak-key tests drive the FIPS 204 primitive
+    /// with keys that [`PublicKey::from_bytes`] rejects. Exposing this outside
+    /// `cfg(test)` would defeat the invariant.
+    #[cfg(test)]
+    pub(crate) fn from_bytes_unchecked(packed: [u8; ML_DSA_87_PUBLIC_KEY_SIZE]) -> Self {
+        Self { packed }
+    }
+
+    /// Borrows the packed encoding (`rho || t1`), e.g. for address derivation
+    /// or serialisation.
+    pub fn as_bytes(&self) -> &[u8; ML_DSA_87_PUBLIC_KEY_SIZE] {
+        &self.packed
+    }
+
+    /// Returns a copy of the packed encoding (`rho || t1`).
+    pub fn to_bytes(&self) -> [u8; ML_DSA_87_PUBLIC_KEY_SIZE] {
+        self.packed
+    }
+}
+
+impl PartialEq for PublicKey {
+    fn eq(&self, other: &Self) -> bool {
+        constant_time_eq(&self.packed, &other.packed)
+    }
+}
+
+impl Eq for PublicKey {}
+
 pub fn extract_message(signature_message: &[u8]) -> Option<&[u8]> {
     if signature_message.len() < ML_DSA_87_SIGNATURE_SIZE {
         None
@@ -119,6 +211,76 @@ pub fn extract_signature(signature_message: &[u8]) -> Option<&[u8]> {
     }
 }
 
+// Weak-key rule constants, derived from the parameter set. A t1 coefficient
+// v is large when T1_LARGE_LOW <= v <= T1_LARGE_HIGH_BELOW_HALF or
+// T1_LARGE_LOW_ABOVE_HALF <= v <= T1_LARGE_HIGH; a key is weak unless at
+// least T1_MIN_LARGE of its K * N coefficients are large. See
+// `validate_mldsa_public_key`.
+//
+//   T1_LARGE_LOW             = floor(3 * GAMMA2 / 2^D) + 1          = 96
+//   T1_LARGE_HIGH_BELOW_HALF = floor((Q - 6 * GAMMA2) / 2^(D + 1))  = 415
+//   T1_LARGE_LOW_ABOVE_HALF  = ceil((Q + 6 * GAMMA2) / 2^(D + 1))   = 608
+//   T1_LARGE_HIGH            = ceil((Q - 3 * GAMMA2) / 2^D) - 1     = 927
+//   T1_MIN_LARGE             = OMEGA + 1                            = 76
+//
+// `i32::div_ceil` is not stable, so the two ceilings go through `u32`.
+const T1_LARGE_LOW: i32 = 3 * GAMMA2 / (1 << D) + 1;
+const T1_LARGE_HIGH_BELOW_HALF: i32 = (Q - 6 * GAMMA2) / (1 << (D + 1));
+const T1_LARGE_LOW_ABOVE_HALF: i32 = ((Q + 6 * GAMMA2) as u32).div_ceil(1 << (D + 1)) as i32;
+const T1_LARGE_HIGH: i32 = ((Q - 3 * GAMMA2) as u32).div_ceil(1 << D) as i32 - 1;
+const T1_MIN_LARGE: usize = OMEGA + 1;
+
+/// Reports whether `public_key` is safe to use as a verification key.
+///
+/// It rejects a wrong-length encoding ([`QrllibError::InvalidPublicKeySize`])
+/// and a weak key ([`QrllibError::WeakPublicKey`]), defined below. Any other
+/// well-formed key passes.
+///
+/// A weak key is one under which the verifier accepts a signature that
+/// anyone can compute from the key alone. With `z = 0` and up to `OMEGA`
+/// hints the verifier reconstructs `w1' = UseHint(h, -c·2^D·t1)`, so if
+/// every coefficient of `c·2^D·t1` can be brought to `HighBits` 0 then
+/// `(z = 0, h, c~ = H(mu || w1Encode(0)))` verifies for any message. That
+/// happens when the coefficients of `t1` are small, either near 0 or near
+/// 2^10 (`2^13·1023 = q - 1`), and also when they sit near 512: then
+/// `2^13·v ≡ 2^-1·s (mod q)` for a small odd `s`, and `c·(1 + x + … + x^255)`
+/// always has even coefficients (each is a sum of the 60 taps of `c`, every
+/// one `±1`), so the `2^-1` cancels.
+///
+/// The rule: a coefficient `v` of `t1` is large when `96 <= v <= 415` or
+/// `608 <= v <= 927`; a key is weak unless at least 76 of its 2048
+/// coefficients are large. A large coefficient contributes more than
+/// `3·GAMMA2` per challenge tap under either mechanism, which is two
+/// `HighBits` bands from zero and beyond hint correction, and `76 = OMEGA + 1`
+/// is more such contributions than the verifier can correct. The bounds
+/// derive from the parameter set (`q = 8380417`, `D = 13`,
+/// `GAMMA2 = (q - 1) / 32 = 261888`, `OMEGA = 75`):
+///
+/// ```text
+/// low              = floor(3·GAMMA2 / 2^D) + 1         = 96
+/// high below half  = floor((q - 6·GAMMA2) / 2^(D+1))   = 415
+/// low above half   = ceil((q + 6·GAMMA2) / 2^(D+1))    = 608
+/// high             = ceil((q - 3·GAMMA2) / 2^D) - 1    = 927
+/// minimum large    = OMEGA + 1                         = 76
+/// ```
+///
+/// Key generation never produces a weak key: an honest `t1` has about 1280
+/// large coefficients (the observed minimum over 500 keys was 1230), and the
+/// chance of fewer than 76 is below 2^-800.
+///
+/// The check is separate from [`verify_bytes`] and [`open`] on purpose.
+/// FIPS 204 Algorithm 8 has no key-validity step, and the C2SP/wycheproof
+/// vectors require a conformant verifier to accept the all-zero key (tcId 66
+/// and 174) and the all-1023 key (tcId 240), both weak under this rule, so
+/// the primitive stays as the standard specifies and validation runs once,
+/// in [`PublicKey::from_bytes`] and in key generation, the only
+/// ways to obtain a [`PublicKey`]. It is exported for callers holding raw
+/// bytes. See `.github/wycheproof/README.md`.
+///
+/// go-qrllib, qrypto.js and wallet.js apply the same rule and are tested
+/// against the same vector file (here
+/// `crates/qrllib/src/mldsa/testdata/weak_public_key_vectors.json`), so a
+/// key is accepted or rejected identically across QRL clients.
 pub fn validate_mldsa_public_key(public_key: &[u8]) -> Result<()> {
     if public_key.len() != ML_DSA_87_PUBLIC_KEY_SIZE {
         return Err(QrllibError::InvalidPublicKeySize {
@@ -128,9 +290,54 @@ pub fn validate_mldsa_public_key(public_key: &[u8]) -> Result<()> {
         });
     }
 
+    // ML_DSA_87_PUBLIC_KEY_SIZE = ML_DSA_87_CRYPTO_SEED_SIZE + K * POLY_T1_PACKED_BYTES,
+    // so public_key[ML_DSA_87_CRYPTO_SEED_SIZE..] is exactly the packed t1.
+    if count_large_t1(&public_key[ML_DSA_87_CRYPTO_SEED_SIZE..]) < T1_MIN_LARGE {
+        return Err(QrllibError::WeakPublicKey);
+    }
+
     Ok(())
 }
 
+/// Returns how many coefficients of the packed `t1` (`K` polynomials of
+/// `POLY_T1_PACKED_BYTES` each) are large. Every coefficient is in
+/// `[0, 2^10)` after `poly_t1_unpack`. The key is public data, but the
+/// accumulation is branch-free like the rest of the module: each range test
+/// folds to 0 (in range) or -1 (outside) through the sign bit of the two
+/// differences, so the cost does not depend on which coefficients are large.
+fn count_large_t1(packed_t1: &[u8]) -> usize {
+    let mut poly = Poly::default();
+    let mut count = 0_usize;
+    for chunk in packed_t1.chunks_exact(POLY_T1_PACKED_BYTES) {
+        poly_t1_unpack(&mut poly, chunk);
+        for v in poly.coeffs {
+            let in_low = ((v - T1_LARGE_LOW) | (T1_LARGE_HIGH_BELOW_HALF - v)) >> 31;
+            let in_high = ((v - T1_LARGE_LOW_ABOVE_HALF) | (T1_LARGE_HIGH - v)) >> 31;
+            count += ((1 + in_low) | (1 + in_high)) as usize;
+        }
+    }
+    count
+}
+
+/// Checks a packed ML-DSA-87 secret key before it is used for signing: the
+/// length, then that every coefficient of `s1` and `s2` lies in
+/// `[-ETA, ETA]`, returning [`QrllibError::InvalidMlDsaSecretKeyEncoding`]
+/// otherwise.
+///
+/// A packed secret key is `rho || K || tr || s1 || s2 || t0`. The `s1` and
+/// `s2` coefficients are stored as 3-bit fields holding `ETA - v`, so
+/// `0..=2 * ETA` are the only encodings key generation writes; 5, 6 and 7
+/// decode to -3, -4 and -5. `t0` has no invalid encoding (every 13-bit field
+/// decodes into the Power2Round range) and `rho`, `K` and `tr` are opaque
+/// bytes, so this is the whole of what can be checked without recomputing
+/// the public key. An out-of-range `s1` or `s2` breaks the
+/// `‖z‖∞ < GAMMA1 − BETA` bound the rejection loop relies on, and with it
+/// the zero-knowledge property of the signature.
+///
+/// Every signing path applies the same check after unpacking the key. Keys
+/// from [`MlDsa87`] always pass; this is for callers holding raw secret-key
+/// bytes, such as [`sign_with_secret_key`] (go-qrllib `ValidateSecretKey`,
+/// qrypto.js `validateSecretKey`).
 pub fn validate_mldsa_secret_key(secret_key: &[u8]) -> Result<()> {
     if secret_key.len() != ML_DSA_87_SECRET_KEY_SIZE {
         return Err(QrllibError::InvalidMlDsaSecretKeySize(
@@ -139,40 +346,73 @@ pub fn validate_mldsa_secret_key(secret_key: &[u8]) -> Result<()> {
         ));
     }
 
-    Ok(())
+    let mut s1 = PolyVecL::default();
+    let mut s2 = PolyVecK::default();
+    let mut offset = 2 * ML_DSA_87_CRYPTO_SEED_SIZE + TR_BYTES;
+    for poly in s1.vec.iter_mut().chain(s2.vec.iter_mut()) {
+        poly_eta_unpack(poly, &secret_key[offset..offset + POLY_ETA_PACKED_BYTES]);
+        offset += POLY_ETA_PACKED_BYTES;
+    }
+    let in_range = secret_key_vecs_in_range(&s1, &s2);
+    zero_poly_vec_l(&mut s1);
+    zero_poly_vec_k(&mut s2);
+    if in_range { Ok(()) } else { Err(QrllibError::InvalidMlDsaSecretKeyEncoding) }
 }
 
+/// Reports whether every coefficient of `s1` and `s2` lies in `[-ETA, ETA]`.
+/// Branch-free like the rest of the module: `(v + ETA) | (ETA - v)` is
+/// negative exactly when `v` is out of range, and the sign bits are OR-ed so
+/// the scan never stops early.
+fn secret_key_vecs_in_range(s1: &PolyVecL, s2: &PolyVecK) -> bool {
+    let mut bad = 0_i32;
+    for poly in s1.vec.iter().chain(s2.vec.iter()) {
+        for v in poly.coeffs {
+            bad |= (v + ETA) | (ETA - v);
+        }
+    }
+    bad >= 0
+}
+
+/// Verifies a detached ML-DSA-87 `signature` over `message` under `context`
+/// (FIPS 204 Algorithm 8, with the `0x00 || len(ctx) || ctx` domain prefix).
+///
+/// `public_key` is a validated [`PublicKey`]. Key validation happens in
+/// [`PublicKey::from_bytes`] / key generation, never here, so the primitive
+/// stays a conformant FIPS 204 implementation. Raw key bytes are no longer
+/// accepted; decode them with [`PublicKey::from_bytes`] first.
+///
+/// Returns `Ok(false)` for a signature that does not verify, and `Err` for a
+/// wrong-length signature or an over-long context.
 pub fn verify_bytes(
     context: &[u8],
     message: &[u8],
     signature: &[u8],
-    public_key: &[u8],
+    public_key: &PublicKey,
 ) -> Result<bool> {
     if signature.len() != ML_DSA_87_SIGNATURE_SIZE {
         return Err(QrllibError::InvalidSignatureSize(signature.len(), ML_DSA_87_SIGNATURE_SIZE));
     }
-    validate_mldsa_public_key(public_key)?;
 
     let mut signature_bytes = [0_u8; ML_DSA_87_SIGNATURE_SIZE];
     signature_bytes.copy_from_slice(signature);
-    let mut public_key_bytes = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
-    public_key_bytes.copy_from_slice(public_key);
-    crypto_sign_verify_mldsa(&signature_bytes, context, message, &public_key_bytes)
+    crypto_sign_verify_mldsa(&signature_bytes, context, message, &public_key.packed)
 }
 
+/// Verifies an attached `signature || message` byte string under `context`
+/// and returns the message on success; `Ok(None)` if the input is shorter
+/// than a signature or the signature does not verify.
+///
+/// `public_key` is a validated [`PublicKey`] (see [`verify_bytes`]); raw key
+/// bytes are no longer accepted.
 pub fn open(
     context: &[u8],
     signature_message: &[u8],
-    public_key: &[u8],
+    public_key: &PublicKey,
 ) -> Result<Option<Vec<u8>>> {
     if signature_message.len() < ML_DSA_87_SIGNATURE_SIZE {
         return Ok(None);
     }
-    validate_mldsa_public_key(public_key)?;
-
-    let mut public_key_bytes = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
-    public_key_bytes.copy_from_slice(public_key);
-    crypto_sign_open_mldsa(signature_message, context, &public_key_bytes)
+    crypto_sign_open_mldsa(signature_message, context, &public_key.packed)
 }
 
 /// Sign `message` under `context` using FIPS 204 §3.4 **hedged**
@@ -235,18 +475,40 @@ fn sign_with_secret_key_modal(
 }
 
 impl MlDsa87 {
+    /// Generates a fresh keypair from the system RNG. Upholds the
+    /// [`PublicKey`] validation invariant exactly as [`MlDsa87::from_seed`].
     pub fn generate() -> Result<Self> {
         let mut seed = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
         getrandom::getrandom(&mut seed)?;
-        Ok(Self::from_seed(seed))
+        Self::from_seed(seed)
     }
 
-    pub fn from_seed(seed: [u8; ML_DSA_87_CRYPTO_SEED_SIZE]) -> Self {
+    /// Derives the keypair from a 32-byte crypto seed (FIPS 204 Algorithm 6).
+    ///
+    /// Upholds the [`PublicKey`] validation invariant at generation time: the
+    /// derived public key is passed through [`validate_mldsa_public_key`], and
+    /// a weak outcome (probability below 2^-800; an honest key has about 1280
+    /// large `t1` coefficients against the 76 required) is returned as
+    /// [`QrllibError::WeakPublicKey`] instead of a usable signer.
+    pub fn from_seed(seed: [u8; ML_DSA_87_CRYPTO_SEED_SIZE]) -> Result<Self> {
         let mut public_key = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
         let mut secret_key = [0_u8; ML_DSA_87_SECRET_KEY_SIZE];
         crypto_sign_keypair(&seed, &mut public_key, &mut secret_key);
 
-        Self { public_key, secret_key, seed }
+        // Build the signer first so that, if the invariant check below rejects
+        // the keypair, `Drop` zeroizes the secret key and seed on the way out.
+        let signer = Self { public_key, secret_key, seed };
+        // A correctly sized key can only fail validation by being weak.
+        // Coverage: a weak key from key generation is a below-2^-800 event
+        // with no deterministic trigger (no seed producing one is known, and
+        // none can be searched for). The branch is retained so the
+        // `PublicKey` invariant holds by construction rather than by
+        // probability.
+        if validate_mldsa_public_key(&signer.public_key).is_err() {
+            //coverage:ignore reason=statistically-unreachable
+            return Err(QrllibError::WeakPublicKey);
+        }
+        Ok(signer)
     }
 
     pub fn from_hex_seed(value: &str) -> Result<Self> {
@@ -261,9 +523,18 @@ impl MlDsa87 {
 
         let mut seed_bytes = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE];
         seed_bytes.copy_from_slice(&seed);
-        Ok(Self::from_seed(seed_bytes))
+        Self::from_seed(seed_bytes)
     }
 
+    /// Returns the keypair's validated [`PublicKey`]. Key generation upholds
+    /// the validation invariant, so this cannot fail.
+    pub fn public_key(&self) -> PublicKey {
+        PublicKey { packed: self.public_key }
+    }
+
+    /// Returns the packed public-key bytes (`rho || t1`). Use
+    /// [`MlDsa87::public_key`] when the key is going to be verified against;
+    /// this accessor is for serialisation and address derivation.
     pub fn public_key_bytes(&self) -> [u8; ML_DSA_87_PUBLIC_KEY_SIZE] {
         self.public_key
     }
@@ -1242,7 +1513,13 @@ fn crypto_sign_signature(
 
     unpack_sk(&mut rho, &mut key, &mut tr, &mut t0, &mut s1, &mut s2, secret_key);
 
+    // Inside the closure so that the zeroize sequence below runs for a
+    // rejected key as well.
     let result = (|| -> Result<()> {
+        if !secret_key_vecs_in_range(&s1, &s2) {
+            return Err(QrllibError::InvalidMlDsaSecretKeyEncoding);
+        }
+
         shake256_many(&mut mu, &[&tr, &prefix, message]);
 
         let mut data_to_be_hashed = [0_u8; ML_DSA_87_CRYPTO_SEED_SIZE + RND_BYTES + CRH_BYTES];
@@ -1450,10 +1727,13 @@ fn crypto_sign_open_mldsa(
 #[cfg(test)]
 mod tests {
     use super::{
-        ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
-        ML_DSA_87_SIGNATURE_SIZE, MlDsa87, open, sign_with_secret_key_deterministic, verify_bytes,
+        C_TILDE_BYTES, K, L, ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE,
+        ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87, N, POLY_Z_PACKED_BYTES,
+        PublicKey, T1_MIN_LARGE, crypto_sign_verify_mldsa, open,
+        sign_with_secret_key_deterministic, validate_mldsa_public_key, verify_bytes,
+        weak_keys::forge_zero_hint_signature,
     };
-    use crate::QrllibError;
+    use crate::{QrllibError, WalletType};
     use sha2::Digest;
 
     const HEX_SEED: &str = "f29f58aff0b00de2844f7e20bd9eeaacc379150043beeb328335817512b29fbb";
@@ -1470,7 +1750,7 @@ mod tests {
         assert_eq!(ML_DSA_87_SECRET_KEY_SIZE, 4896);
         assert_eq!(ML_DSA_87_SIGNATURE_SIZE, 4627);
 
-        let signer = MlDsa87::from_seed(known_seed());
+        let signer = MlDsa87::from_seed(known_seed()).expect("signer");
         let imported = MlDsa87::from_hex_seed(HEX_SEED).expect("from hex");
         assert_eq!(signer.public_key_bytes(), imported.public_key_bytes());
         assert_eq!(signer.secret_key_bytes(), imported.secret_key_bytes());
@@ -1487,7 +1767,7 @@ mod tests {
 
     #[test]
     fn mldsa87_sign_verify_open_and_context_paths_match_go() {
-        let signer = MlDsa87::from_seed(known_seed());
+        let signer = MlDsa87::from_seed(known_seed()).expect("signer");
         let context = b"ZOND";
         let message = b"browser wasm mldsa";
         // Byte-equality assertions below (instance ↔ free-fn parity and
@@ -1495,9 +1775,9 @@ mod tests {
         // mode; default `sign` is hedged per TOB-QRLLIB-6.
         let signature = signer.sign_deterministic(context, message).expect("signature");
         assert!(signer.verify(context, message, &signature).expect("verify"));
-        assert!(verify_bytes(context, message, &signature, &signer.public_key_bytes()).unwrap());
+        assert!(verify_bytes(context, message, &signature, &signer.public_key()).unwrap());
         assert!(
-            !verify_bytes(b"other", message, &signature, &signer.public_key_bytes())
+            !verify_bytes(b"other", message, &signature, &signer.public_key())
                 .expect("wrong context")
         );
         assert_eq!(
@@ -1512,7 +1792,7 @@ mod tests {
 
         let sealed = signer.sign_attached_deterministic(context, message).expect("sealed");
         assert_eq!(
-            open(context, &sealed, &signer.public_key_bytes()).expect("open").expect("message"),
+            open(context, &sealed, &signer.public_key()).expect("open").expect("message"),
             message
         );
         assert_eq!(
@@ -1527,7 +1807,7 @@ mod tests {
 
     #[test]
     fn mldsa87_rejects_invalid_sizes_and_contexts() {
-        let signer = MlDsa87::from_seed([5_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+        let signer = MlDsa87::from_seed([5_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
         let oversized_context = vec![0_u8; 256];
         let signature = signer.sign(b"", b"").expect("signature");
 
@@ -1540,24 +1820,27 @@ mod tests {
             Err(QrllibError::InvalidMlDsaContextSize(256, 255))
         ));
         assert!(matches!(
-            verify_bytes(&oversized_context, b"", &signature, &signer.public_key_bytes()),
+            verify_bytes(&oversized_context, b"", &signature, &signer.public_key()),
             Err(QrllibError::InvalidMlDsaContextSize(256, 255))
         ));
-        assert!(super::verify_bytes(b"", b"", &[0_u8; 1], &signer.public_key_bytes()).is_err());
-        assert!(
-            super::verify_bytes(
-                b"",
-                b"",
-                &[0_u8; ML_DSA_87_SIGNATURE_SIZE],
-                &[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE - 1],
-            )
-            .is_err()
-        );
+        assert!(matches!(
+            verify_bytes(b"", b"", &[0_u8; 1], &signer.public_key()),
+            Err(QrllibError::InvalidSignatureSize(1, ML_DSA_87_SIGNATURE_SIZE))
+        ));
+        // Wrong-length keys are stopped at construction, before any verifier.
+        assert!(matches!(
+            PublicKey::from_bytes(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE - 1]),
+            Err(QrllibError::InvalidPublicKeySize {
+                wallet_type: WalletType::MlDsa87,
+                actual: 2591,
+                expected: ML_DSA_87_PUBLIC_KEY_SIZE,
+            })
+        ));
     }
 
     #[test]
     fn mldsa87_randomized_signing_produces_varying_but_valid_signatures() {
-        let signer = MlDsa87::from_seed([11_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+        let signer = MlDsa87::from_seed([11_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
         let context = b"ctx";
         let message = b"randomised signing smoke";
 
@@ -1585,11 +1868,151 @@ mod tests {
 
     #[test]
     fn mldsa87_seal_rejects_zeroized_secret_key() {
-        let mut signer = MlDsa87::from_seed([13_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+        let mut signer = MlDsa87::from_seed([13_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
         signer.zeroize();
         assert!(matches!(
             signer.sign_attached(b"ctx", b"after zeroize"),
             Err(QrllibError::MlDsaSecretKeyZeroized)
         ));
+    }
+
+    #[test]
+    fn public_key_from_bytes_rejects_wrong_lengths() {
+        for length in [0, 1, ML_DSA_87_PUBLIC_KEY_SIZE - 1, ML_DSA_87_PUBLIC_KEY_SIZE + 1] {
+            let bytes = vec![0x5a_u8; length];
+            assert!(
+                matches!(
+                    PublicKey::from_bytes(&bytes),
+                    Err(QrllibError::InvalidPublicKeySize {
+                        wallet_type: WalletType::MlDsa87,
+                        actual,
+                        expected: ML_DSA_87_PUBLIC_KEY_SIZE,
+                    }) if actual == length
+                ),
+                "length {length}"
+            );
+            assert!(matches!(
+                validate_mldsa_public_key(&bytes),
+                Err(QrllibError::InvalidPublicKeySize { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn public_key_from_bytes_rejects_weak_keys() {
+        // The all-zero key has no large coefficient at all.
+        let all_zero = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
+        assert!(matches!(PublicKey::from_bytes(&all_zero), Err(QrllibError::WeakPublicKey)));
+        assert!(matches!(validate_mldsa_public_key(&all_zero), Err(QrllibError::WeakPublicKey)));
+
+        // rho plays no part in the rule, so a non-zero rho with zero t1 is
+        // still rejected, for a constant rho and for a varying one.
+        let mut rho_only = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
+        rho_only[..ML_DSA_87_CRYPTO_SEED_SIZE].fill(0xff);
+        assert!(matches!(PublicKey::from_bytes(&rho_only), Err(QrllibError::WeakPublicKey)));
+        for (index, byte) in rho_only[..ML_DSA_87_CRYPTO_SEED_SIZE].iter_mut().enumerate() {
+            *byte = index as u8 + 1;
+        }
+        assert!(matches!(PublicKey::from_bytes(&rho_only), Err(QrllibError::WeakPublicKey)));
+        assert_eq!(
+            QrllibError::WeakPublicKey.to_string(),
+            format!(
+                "ML-DSA-87 public key is weak: fewer than {} of its {} t1 coefficients are large",
+                T1_MIN_LARGE,
+                K * N
+            )
+        );
+    }
+
+    #[test]
+    fn public_key_accepts_generated_keys_and_round_trips_bytes() {
+        let signer = MlDsa87::from_seed(known_seed()).expect("signer");
+        let bytes = signer.public_key_bytes();
+        let key = PublicKey::from_bytes(&bytes).expect("generated key validates");
+        assert_eq!(key.as_bytes(), &bytes);
+        assert_eq!(key.to_bytes(), bytes);
+        assert_eq!(
+            signer.public_key(),
+            key,
+            "public_key() must equal from_bytes(public_key_bytes())"
+        );
+        assert_eq!(
+            PublicKey::from_bytes(signer.public_key().as_bytes()).expect("round trip"),
+            signer.public_key()
+        );
+
+        let generated = MlDsa87::generate().expect("generate");
+        assert_eq!(
+            PublicKey::from_bytes(&generated.public_key_bytes()).expect("generated validates"),
+            generated.public_key()
+        );
+
+        // Clone / Eq / Debug: a clone compares equal, a different key does not,
+        // and Debug names the type (key bytes are public, nothing to redact).
+        let other =
+            MlDsa87::from_seed([7_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("other").public_key();
+        assert_eq!(key.clone(), key);
+        assert_ne!(key, other);
+        assert!(format!("{key:?}").starts_with("PublicKey"));
+    }
+
+    /// Pins FIPS 204 conformance of the primitive against key validation.
+    /// Under the all-zero-t1 key the signature `(z = 0, h = 0,
+    /// c~ = H(mu || w1Encode(0)))` verifies for ANY message using only public
+    /// data, and Algorithm 8 has no key-validity precondition, so the
+    /// primitive must accept it; the C2SP/wycheproof `ZeroPublicKey` vectors
+    /// (tcId 66 / 174) require exactly this. `PublicKey::from_bytes` is where
+    /// the key is rejected instead, as weak. The rest of the weak-key family
+    /// is covered by the shared vectors in `weak_keys`.
+    #[test]
+    fn zero_t1_forgery_is_accepted_by_the_primitive_and_rejected_at_key_construction() {
+        let context = b"ZOND";
+        let mut weak_pk = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
+        weak_pk[..ML_DSA_87_CRYPTO_SEED_SIZE].fill(0x2a); // rho is arbitrary; t1 = 0
+
+        for message in [&b""[..], b"any message", b"a completely different message"] {
+            let signature = forge_zero_hint_signature(context, message, &weak_pk);
+
+            // Recipe sanity: 4627 bytes; z = 0 packs as the repeating 5-byte
+            // group [00 00 08 00 80] (each coefficient encodes GAMMA1 - 0 =
+            // 2^19, two per five bytes); h is OMEGA + K zero bytes.
+            assert_eq!(signature.len(), 4627);
+            let z_end = C_TILDE_BYTES + L * POLY_Z_PACKED_BYTES;
+            assert!(
+                signature[C_TILDE_BYTES..z_end]
+                    .chunks_exact(5)
+                    .all(|group| group == [0x00, 0x00, 0x08, 0x00, 0x80])
+            );
+            assert!(signature[z_end..].iter().all(|byte| *byte == 0));
+
+            // The FIPS 204 primitive accepts it: Algorithm 8 validates no key.
+            assert!(
+                crypto_sign_verify_mldsa(&signature, context, message, &weak_pk)
+                    .expect("primitive"),
+                "primitive must accept the zero-t1 forgery (FIPS 204 conformance)"
+            );
+            // ...and so does the public verifier when handed the unchecked
+            // key, which is the path the Wycheproof harness takes.
+            assert!(
+                verify_bytes(
+                    context,
+                    message,
+                    &signature,
+                    &PublicKey::from_bytes_unchecked(weak_pk)
+                )
+                .expect("verify")
+            );
+            // Key validation is where the key is stopped.
+            assert!(matches!(PublicKey::from_bytes(&weak_pk), Err(QrllibError::WeakPublicKey)));
+        }
+
+        // The same recipe under an honestly generated key is NOT a valid
+        // signature: honest keys are never weak.
+        let honest_pk = MlDsa87::from_seed(known_seed()).expect("signer").public_key_bytes();
+        let signature = forge_zero_hint_signature(context, b"any message", &honest_pk);
+        assert!(
+            !crypto_sign_verify_mldsa(&signature, context, b"any message", &honest_pk)
+                .expect("primitive")
+        );
     }
 }

@@ -32,20 +32,37 @@ qrllib = "0.1"
 Sign and verify with ML-DSA-87:
 
 ```rust
-use qrllib::{MlDsa87, mldsa::verify_bytes};
+use qrllib::{
+    MlDsa87,
+    mldsa::{PublicKey, verify_bytes},
+};
 
 fn main() -> Result<(), qrllib::QrllibError> {
     let signer = MlDsa87::generate()?;
-    let public_key = signer.public_key_bytes();
+    let public_key = signer.public_key();
 
     let context = b"my-app-v1";
     let message = b"hello, post-quantum world";
     let signature = signer.sign(context, message)?;
 
     assert!(verify_bytes(context, message, &signature, &public_key)?);
+
+    // `from_bytes` rejects a wrong-length encoding and a weak key, so a
+    // verifier is never handed an unvalidated key.
+    let received = PublicKey::from_bytes(public_key.as_bytes())?;
+    assert_eq!(received, public_key);
     Ok(())
 }
 ```
+
+`verify_bytes`, `open` and `verify_mldsa87_wallet_signature` take a
+`mldsa::PublicKey` (also exported as `qrllib::MlDsa87PublicKey`), never raw
+bytes. `PublicKey::from_bytes` rejects weak keys, which key generation never
+produces. FIPS 204 requires the verifier itself to accept them (the
+C2SP/wycheproof `ZeroPublicKey` and `MissingReduction` vectors check that it
+does), so validation
+runs once, at construction. The rustdoc for `mldsa::validate_mldsa_public_key`
+states the rule, which go-qrllib, qrypto.js and wallet.js share.
 
 See the [API docs](https://docs.rs/qrllib) for the wallet-level API
 (`MlDsa87Wallet`, QRL addresses, mnemonics) and the other schemes.
@@ -69,7 +86,9 @@ The implementations are checked for byte-level correctness against:
 - Reference implementations via CI cross-verification — pq-crystals (ML-DSA-87),
   the SPHINCS+ reference, and the XMSS reference.
 - NIST ACVP test vectors (ML-DSA-87, ML-KEM-1024).
-- Project Wycheproof and C2SP/CCTV vectors (ML-KEM-1024).
+- Project Wycheproof vectors (ML-DSA-87 verify, including the weak-key
+  `ZeroPublicKey` and `MissingReduction` groups; ML-KEM-1024) and C2SP/CCTV
+  vectors (ML-KEM-1024).
 
 ## Security
 

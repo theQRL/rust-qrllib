@@ -3,7 +3,9 @@ use crate::{
     address::{format_address, to_checksum_address, unsafe_get_address},
     descriptor::Descriptor,
     error::{QrllibError, Result},
-    mldsa::{ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87, verify_bytes},
+    mldsa::{
+        ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87, PublicKey, verify_bytes,
+    },
     mnemonic::{bin_to_mnemonic, mnemonic_to_bin},
     seed::{ExtendedSeed, Seed},
     signing_context::signing_context,
@@ -47,10 +49,23 @@ impl core::fmt::Debug for MlDsa87Wallet {
     }
 }
 
+/// Verifies a wallet-level ML-DSA-87 `signature` over `message` under
+/// `public_key` and the descriptor-bound signing context
+/// ([`signing_context`]`(descriptor)`). Returns `false`, and never panics,
+/// when the descriptor is invalid or not ML-DSA-87, the signature has the
+/// wrong length, or the signature does not verify.
+///
+/// `public_key` is a validated [`PublicKey`]: decode wire bytes with
+/// [`PublicKey::from_bytes`], which rejects a wrong-length encoding and a
+/// weak key. That validation lives at key construction rather than in the
+/// FIPS 204 primitive so the primitive stays conformant (see
+/// [`crate::mldsa::validate_mldsa_public_key`] for the rule); every QRL
+/// client applies the same rule so a signature is valid or invalid
+/// consistently across implementations.
 pub fn verify_mldsa87_wallet_signature(
     message: &[u8],
     signature: &[u8],
-    public_key: &[u8],
+    public_key: &PublicKey,
     descriptor: Descriptor,
 ) -> bool {
     if !descriptor.is_valid() || !matches!(descriptor.wallet_type(), Ok(WalletType::MlDsa87)) {
@@ -68,7 +83,7 @@ impl MlDsa87Wallet {
 
     pub fn from_seed(seed: Seed) -> Result<Self> {
         let descriptor = Descriptor::mldsa87();
-        let signer = MlDsa87::from_seed(seed.sha256());
+        let signer = MlDsa87::from_seed(seed.sha256())?;
         Ok(Self { descriptor, signer, seed })
     }
 
@@ -120,7 +135,15 @@ impl MlDsa87Wallet {
         self.descriptor
     }
 
-    pub fn public_key(&self) -> [u8; ML_DSA_87_PUBLIC_KEY_SIZE] {
+    /// Returns the wallet's validated ML-DSA-87 [`PublicKey`], ready to pass
+    /// to [`verify_mldsa87_wallet_signature`].
+    pub fn public_key(&self) -> PublicKey {
+        self.signer.public_key()
+    }
+
+    /// Returns the packed public-key bytes (`rho || t1`) for serialisation
+    /// and address derivation; equivalent to `self.public_key().to_bytes()`.
+    pub fn public_key_bytes(&self) -> [u8; ML_DSA_87_PUBLIC_KEY_SIZE] {
         self.signer.public_key_bytes()
     }
 
@@ -129,7 +152,7 @@ impl MlDsa87Wallet {
     }
 
     pub fn address(&self) -> [u8; ADDRESS_SIZE] {
-        unsafe_get_address(&self.public_key(), self.descriptor)
+        unsafe_get_address(&self.public_key_bytes(), self.descriptor)
     }
 
     pub fn address_string(&self) -> String {
@@ -185,7 +208,7 @@ impl Drop for MlDsa87Wallet {
 mod tests {
     use crate::{
         address::is_valid_address,
-        mldsa::ML_DSA_87_SIGNATURE_SIZE,
+        mldsa::{ML_DSA_87_SIGNATURE_SIZE, PublicKey},
         seed::{ExtendedSeed, Seed},
         wallet::{MlDsa87Wallet, verify_mldsa87_wallet_signature},
     };
@@ -197,6 +220,11 @@ mod tests {
         let wallet_b = MlDsa87Wallet::from_seed(seed).expect("wallet");
 
         assert_eq!(wallet_a.public_key(), wallet_b.public_key());
+        assert_eq!(wallet_a.public_key_bytes(), wallet_b.public_key_bytes());
+        assert_eq!(
+            PublicKey::from_bytes(&wallet_a.public_key_bytes()).expect("wallet key validates"),
+            wallet_a.public_key()
+        );
         assert_eq!(wallet_a.address(), wallet_b.address());
         assert_eq!(wallet_a.descriptor(), wallet_b.descriptor());
     }

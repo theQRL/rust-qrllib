@@ -6,9 +6,11 @@
 # 100% of *testable* code. CI runs the pinned GitHub Action; locally install:
 #   cargo install --git https://github.com/jplomas/ignore-cov --rev b866fc4861b843343c7c03f326faa56dbc0be585
 #
-# The in-crate ML-KEM ACVP tests are vector-gated: export MLKEM_ACVP_VECTORS_DIR
-# (see .github/workflows/acvp.yml for the sparse clone) before `make coverage`,
-# or the acvp:: module reports as uncovered.
+# The in-crate conformance harnesses are vector-gated: export
+# MLKEM_ACVP_VECTORS_DIR (mlkem::acvp), ACVP_VECTORS_DIR (mldsa::acvp) and
+# WYCHEPROOF_VECTORS_DIR (mldsa::wycheproof) before `make coverage` — see the
+# `coverage` job in .github/workflows/test.yml for the sparse clones and the
+# ML-DSA merge step — or those modules report as uncovered.
 .PHONY: test coverage coverage-html lint
 
 test:

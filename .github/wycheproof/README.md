@@ -23,13 +23,26 @@ to a specific commit and bump deliberately.
 
 ## ML-DSA-87
 
-`crates/qrllib/tests/wycheproof_mldsa.rs` walks `mldsa_87_verify_test.json`,
-calls `rust-qrllib`'s `verify_bytes` for each test vector, and asserts the
-result matches the expected `result` field.
+The in-crate `mldsa::wycheproof` module (`crates/qrllib/src/mldsa/wycheproof.rs`)
+walks `mldsa_87_verify_test.json`, calls `rust-qrllib`'s `verify_bytes` for each
+test vector, and asserts the result matches the expected `result` field.
+
+It is a lib test rather than an integration test because three `valid`
+vectors are signed under weak keys: tcId 66 and 174 (flag `ZeroPublicKey`,
+all-zero t1) and tcId 240 (flag `MissingReduction`, every t1 coefficient
+1023). FIPS 204 Algorithm 8 has no key-validity step, so the primitive must
+accept them, but the public `PublicKey::from_bytes` rejects both keys
+(`QrllibError::WeakPublicKey`; the rustdoc for `validate_mldsa_public_key`
+states the rule). The harness wraps each group's key with the
+`#[cfg(test)]`-only `PublicKey::from_bytes_unchecked`, which downstream crates
+cannot reach, asserts that exactly those groups' keys are rejected as weak and
+every other well-formed key passes validation, and asserts that at least one
+`valid` vector under each of the two weak keys was accepted. If that last
+assertion ever fails, key validation has leaked into the primitive.
 
 | Vector file | Source | Description |
 |-------------|--------|-------------|
-| `mldsa_87_verify_test.json` | upstream `testvectors_v1/` | ML-DSA-87 verification edge cases: malleability, truncated/extended signatures, wrong-length public keys, context-string variants, and similar boundary conditions. |
+| `mldsa_87_verify_test.json` | upstream `testvectors_v1/` | ML-DSA-87 verification edge cases: malleability, truncated/extended signatures, wrong-length public keys, weak `ZeroPublicKey` (all-zero t1) and `MissingReduction` (all-1023 t1) keys, context-string variants, and similar boundary conditions. |
 
 ## ML-KEM-1024
 
@@ -81,7 +94,7 @@ here (ML-DSA additionally uses `acceptable`):
 # ML-DSA-87
 git clone --depth 1 https://github.com/C2SP/wycheproof.git /tmp/wycheproof
 WYCHEPROOF_VECTORS_DIR=/tmp/wycheproof/testvectors_v1 \
-  cargo test --package qrllib --test wycheproof_mldsa -- --nocapture
+  cargo test --package qrllib --lib 'mldsa::wycheproof::' -- --nocapture
 
 # ML-KEM-1024 (+ CCTV modulus corpus)
 git clone --depth 1 https://github.com/C2SP/CCTV.git /tmp/cctv

@@ -9,8 +9,8 @@
 //!
 //! Slow (~20-60s in aggregate). Gated by the `METAMORPHIC_EXHAUSTIVE=1`
 //! env var so day-to-day `cargo test` doesn't pay the cost — same
-//! pattern the existing `acvp_mldsa.rs` and `wycheproof_mldsa.rs`
-//! integration tests use. CI runs them via a dedicated step (see
+//! pattern the in-crate `mldsa::acvp` and `mldsa::wycheproof`
+//! conformance harnesses use. CI runs them via a dedicated step (see
 //! `.github/workflows/test.yml`).
 //!
 //! API adaptations for the Rust port (post TOB-QRLLIB-6 / -12):
@@ -24,9 +24,18 @@ use std::env;
 use qrllib::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE,
     ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    mldsa::{sign_with_secret_key_deterministic, verify_bytes},
+    mldsa::{PublicKey, sign_with_secret_key_deterministic, verify_bytes},
     open,
 };
+
+/// Verify under raw public-key bytes with the wallet-layer contract: a key
+/// that validation rejects (wrong length or weak key) never verifies
+/// anything, and a key it accepts is handed to the FIPS 204 verifier.
+fn verify_with_raw_pk(ctx: &[u8], message: &[u8], signature: &[u8], pk: &[u8]) -> bool {
+    PublicKey::from_bytes(pk)
+        .map(|pk| verify_bytes(ctx, message, signature, &pk).unwrap_or(false))
+        .unwrap_or(false)
+}
 
 fn exhaustive_enabled() -> bool {
     matches!(env::var("METAMORPHIC_EXHAUSTIVE").as_deref(), Ok("1"))
@@ -79,17 +88,17 @@ fn metamorphic_verify_rejects_bit_mauled_public_keys() {
         return;
     }
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
         let signature = signer.sign(&vec.ctx, &vec.message).expect("sign");
-        let pk = signer.public_key_bytes();
-        assert!(verify_bytes(&vec.ctx, &vec.message, &signature, &pk).expect("baseline"));
+        let pk_bytes = signer.public_key_bytes();
+        assert!(verify_with_raw_pk(&vec.ctx, &vec.message, &signature, &pk_bytes), "baseline");
 
         for bit in 0..(ML_DSA_87_PUBLIC_KEY_SIZE * 8) {
-            let mauled = flip_single_bit(&pk, bit);
+            let mauled = flip_single_bit(&pk_bytes, bit);
             let mut mauled_pk = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
             mauled_pk.copy_from_slice(&mauled);
             assert!(
-                !verify_bytes(&vec.ctx, &vec.message, &signature, &mauled_pk).unwrap_or(false),
+                !verify_with_raw_pk(&vec.ctx, &vec.message, &signature, &mauled_pk),
                 "{}: bit-mauled pk verified at bit {}",
                 vec.name,
                 bit
@@ -105,9 +114,9 @@ fn metamorphic_verify_rejects_bit_mauled_messages() {
         return;
     }
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
         let signature = signer.sign(&vec.ctx, &vec.message).expect("sign");
-        let pk = signer.public_key_bytes();
+        let pk = signer.public_key();
         assert!(verify_bytes(&vec.ctx, &vec.message, &signature, &pk).expect("baseline"));
 
         for bit in 0..(vec.message.len() * 8) {
@@ -129,9 +138,9 @@ fn metamorphic_verify_rejects_bit_mauled_signatures() {
         return;
     }
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
         let signature = signer.sign(&vec.ctx, &vec.message).expect("sign");
-        let pk = signer.public_key_bytes();
+        let pk = signer.public_key();
         assert!(verify_bytes(&vec.ctx, &vec.message, &signature, &pk).expect("baseline"));
 
         for bit in 0..(ML_DSA_87_SIGNATURE_SIZE * 8) {
@@ -159,7 +168,7 @@ fn metamorphic_deterministic_signing_changes_on_bit_mauled_messages() {
         return;
     }
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
         let base = signer.sign_deterministic(&vec.ctx, &vec.message).expect("base");
 
         for bit in 0..(vec.message.len() * 8) {
@@ -193,8 +202,8 @@ fn metamorphic_secret_key_mauling_feature_scan() {
     const TR_BYTES: usize = 64;
 
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
-        let pk = signer.public_key_bytes();
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
+        let pk = signer.public_key();
         let sk_owned = signer.secret_key_bytes();
         let sk: &[u8; ML_DSA_87_SECRET_KEY_SIZE] = &sk_owned;
         let base = sign_with_secret_key_deterministic(&vec.ctx, &vec.message, sk).expect("base");
@@ -250,9 +259,9 @@ fn metamorphic_sign_attached_open_rejects_bit_mauled_attached_signatures() {
         return;
     }
     for vec in corpus() {
-        let signer = MlDsa87::from_seed(vec.seed);
+        let signer = MlDsa87::from_seed(vec.seed).expect("signer");
         let sealed = signer.sign_attached(&vec.ctx, &vec.message).expect("sign_attached");
-        let pk = signer.public_key_bytes();
+        let pk = signer.public_key();
 
         let opened = open(&vec.ctx, &sealed, &pk).expect("baseline").expect("baseline msg");
         assert_eq!(opened, vec.message, "{}: baseline sealed message did not round-trip", vec.name);

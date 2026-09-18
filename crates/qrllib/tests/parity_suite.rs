@@ -1,8 +1,10 @@
 use qrllib::{
     ML_DSA_87_CRYPTO_SEED_SIZE, ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE, extract_message,
-    extract_signature, mldsa::verify_bytes, open, sphincsplus_extract_message,
-    sphincsplus_extract_signature, sphincsplus_open, verify_sphincsplus_signature,
+    QrllibError, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, SPHINCS_PLUS_256S_SIGNATURE_SIZE,
+    extract_message, extract_signature,
+    mldsa::{PublicKey, verify_bytes},
+    open, sphincsplus_extract_message, sphincsplus_extract_signature, sphincsplus_open,
+    verify_sphincsplus_signature,
 };
 
 const ML_DSA_C_TILDE_BYTES: usize = 64;
@@ -13,8 +15,8 @@ const ML_DSA_K: usize = 8;
 
 #[test]
 fn mldsa_canonicality_and_edge_cases_match_go_expectations() {
-    let signer = MlDsa87::from_seed([11_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
-    let public_key = signer.public_key_bytes();
+    let signer = MlDsa87::from_seed([11_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
+    let public_key = signer.public_key();
     let context = b"ctx";
     let message = b"test message for canonicality";
     let signature = signer.sign(context, message).expect("signature");
@@ -86,7 +88,14 @@ fn mldsa_canonicality_and_edge_cases_match_go_expectations() {
 
 #[test]
 fn malformed_signature_helpers_do_not_panic_for_supported_stateless_schemes() {
-    let mldsa_public_key = [0_u8; ML_DSA_87_PUBLIC_KEY_SIZE];
+    // The all-zero ML-DSA-87 key is weak and is stopped at construction, so
+    // the no-panic sweep below runs under an honest key.
+    assert!(matches!(
+        PublicKey::from_bytes(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE]),
+        Err(QrllibError::WeakPublicKey)
+    ));
+    let mldsa_public_key =
+        MlDsa87::from_seed([12_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer").public_key();
     let sphincs_public_key = [0_u8; SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE];
 
     for length in [

@@ -1,8 +1,8 @@
 use qrllib::{
     ADDRESS_SIZE, DESCRIPTOR_SIZE, Descriptor, ExtendedSeed, ML_DSA_87_CRYPTO_SEED_SIZE,
     ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SECRET_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
-    MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE, Seed,
-    SphincsPlus256s, WalletType, bin_to_mnemonic, extract_message, extract_signature,
+    MlDsa87PublicKey, MlDsa87Wallet, QrllibError, SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
+    Seed, SphincsPlus256s, WalletType, bin_to_mnemonic, extract_message, extract_signature,
     format_address, get_address, is_valid_address, mnemonic_to_bin, open,
     validate_mldsa_public_key, validate_mldsa_secret_key, verify_mldsa87_wallet_signature,
 };
@@ -65,7 +65,7 @@ fn descriptor_wallet_type_and_address_validation_paths_are_exercised() {
     assert_eq!(WalletType::MlDsa87.to_string(), "ML_DSA_87");
     assert_eq!(WalletType::SphincsPlus256s.to_string(), "SPHINCSPLUS_256S");
 
-    let signer = MlDsa87::from_seed([7_u8; ML_DSA_87_CRYPTO_SEED_SIZE]);
+    let signer = MlDsa87::from_seed([7_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
     let address = get_address(&signer.public_key_bytes(), descriptor).expect("address");
     assert_eq!(address.len(), ADDRESS_SIZE);
     let address_string = format_address(&address);
@@ -132,20 +132,22 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
     assert_eq!(extract_message(&signature).expect("empty message"), b"");
 
     let sealed = imported.sign_attached(b"context", message).expect("sealed message");
-    let opened =
-        open(b"context", &sealed, &imported.public_key_bytes()).expect("open").expect("opened");
+    let opened = open(b"context", &sealed, &imported.public_key()).expect("open").expect("opened");
     assert_eq!(opened, message);
-    assert!(
-        open(b"context", &[1_u8; 4], &imported.public_key_bytes()).expect("short open").is_none()
-    );
+    assert!(open(b"context", &[1_u8; 4], &imported.public_key()).expect("short open").is_none());
 
     assert!(imported.verify(b"context", message, &signature).expect("verify"));
     assert!(MlDsa87::from_hex_seed("0x00").is_err());
-    assert!(
-        open(b"context", &sealed, &[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE],)
-            .expect("invalid verification")
-            .is_none()
-    );
+    // The all-zero key is weak and never reaches `open`: it is rejected at
+    // construction (via the crate-root alias here). An honest but wrong key
+    // does reach it and fails to open the sealed message.
+    assert!(matches!(
+        MlDsa87PublicKey::from_bytes(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE]),
+        Err(QrllibError::WeakPublicKey)
+    ));
+    let other_key =
+        MlDsa87::from_seed([0x33_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer").public_key();
+    assert!(open(b"context", &sealed, &other_key).expect("honest wrong key").is_none());
 
     let mut zeroized = imported.clone();
     zeroized.zeroize();
@@ -165,6 +167,10 @@ fn mldsa_public_api_covers_generation_import_export_and_zeroization() {
             actual: 1,
             expected: ML_DSA_87_PUBLIC_KEY_SIZE,
         })
+    ));
+    assert!(matches!(
+        validate_mldsa_public_key(&[0_u8; ML_DSA_87_PUBLIC_KEY_SIZE]),
+        Err(QrllibError::WeakPublicKey)
     ));
 }
 

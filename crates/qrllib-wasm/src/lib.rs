@@ -1,8 +1,8 @@
 use qrllib::{
     Descriptor, LEGACY_XMSS_EXTENDED_PUBLIC_KEY_SIZE, LEGACY_XMSS_EXTENDED_SEED_SIZE,
-    LegacyXmssWallet, MlDsa87Wallet, QrlDescriptor, QrllibError, SphincsPlus256sWallet,
-    XmssHashFunction, XmssHeight, verify_legacy_xmss, verify_mldsa87_wallet_signature,
-    verify_sphincsplus_wallet_signature,
+    LegacyXmssWallet, MlDsa87PublicKey, MlDsa87Wallet, QrlDescriptor, QrllibError,
+    SphincsPlus256sWallet, XmssHashFunction, XmssHeight, verify_legacy_xmss,
+    verify_mldsa87_wallet_signature, verify_sphincsplus_wallet_signature,
 };
 use serde::Serialize;
 use std::cell::RefCell;
@@ -156,7 +156,7 @@ fn snapshot_mldsa_wallet(wallet: &MlDsa87Wallet) -> Result<WalletSnapshot, JsVal
         descriptor_hex: hex::encode(wallet.descriptor().to_bytes()),
         extended_seed_hex: wallet.hex_seed().map_err(to_js_error)?,
         mnemonic: wallet.mnemonic().map_err(to_js_error)?,
-        public_key_hex: hex::encode(wallet.public_key()),
+        public_key_hex: hex::encode(wallet.public_key_bytes()),
         raw_seed_hex: wallet.seed().to_hex_prefixed(),
         xmss_hash_function: None,
         xmss_height: None,
@@ -284,7 +284,14 @@ pub fn verify_message(
     let descriptor = Descriptor::from_bytes(&descriptor_bytes).map_err(to_js_error)?;
     let signature = hex::decode(signature_hex).map_err(to_js_error)?;
 
-    Ok(verify_mldsa87_wallet_signature(message.as_bytes(), &signature, &public_key, descriptor))
+    // A key that validation rejects (wrong length or weak key) verifies
+    // nothing and is reported as `false`, matching the wallet-level
+    // contract, rather than as a JS error.
+    Ok(MlDsa87PublicKey::from_bytes(&public_key)
+        .map(|public_key| {
+            verify_mldsa87_wallet_signature(message.as_bytes(), &signature, &public_key, descriptor)
+        })
+        .unwrap_or(false))
 }
 
 #[wasm_bindgen]

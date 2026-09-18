@@ -4,9 +4,10 @@ use qrllib::{
     ML_DSA_87_PUBLIC_KEY_SIZE, ML_DSA_87_SIGNATURE_SIZE, MlDsa87,
     SPHINCS_PLUS_256S_CRYPTO_SEED_SIZE, SPHINCS_PLUS_256S_PUBLIC_KEY_SIZE,
     SPHINCS_PLUS_256S_SIGNATURE_SIZE, SphincsPlus256s, Xmss, XmssHashFunction, XmssHeight,
-    extract_message, extract_signature, mldsa::verify_bytes, open, sphincsplus_extract_message,
-    sphincsplus_extract_signature, sphincsplus_open, verify_sphincsplus_signature, verify_xmss,
-    verify_xmss_with_custom_wots_param_w,
+    extract_message, extract_signature,
+    mldsa::{PublicKey, verify_bytes},
+    open, sphincsplus_extract_message, sphincsplus_extract_signature, sphincsplus_open,
+    verify_sphincsplus_signature, verify_xmss, verify_xmss_with_custom_wots_param_w,
 };
 
 fn pad_array<const N: usize>(input: &[u8]) -> [u8; N] {
@@ -23,14 +24,14 @@ fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths
     // signing. Default `sign` is hedged per TOB-QRLLIB-6; where a stable
     // byte image is needed for setup it is produced via the explicit
     // `sign_deterministic` entry points.
-    let mldsa = Arc::new(MlDsa87::from_seed([9_u8; 32]));
+    let mldsa = Arc::new(MlDsa87::from_seed([9_u8; 32]).expect("signer"));
     let mldsa_context = b"context".to_vec();
     let mldsa_message = b"concurrent mldsa verification".to_vec();
     let mldsa_signature =
         mldsa.sign_deterministic(&mldsa_context, &mldsa_message).expect("mldsa signature");
     let mut mldsa_sealed = mldsa_signature.to_vec();
     mldsa_sealed.extend_from_slice(&mldsa_message);
-    let mldsa_public_key = mldsa.public_key_bytes();
+    let mldsa_public_key = mldsa.public_key();
 
     thread::scope(|scope| {
         let mut handles = Vec::new();
@@ -40,13 +41,11 @@ fn stateless_signature_schemes_are_safe_for_parallel_read_only_and_signing_paths
             let message = mldsa_message.clone();
             let signature = mldsa_signature;
             let sealed = mldsa_sealed.clone();
+            let public_key = mldsa_public_key.clone();
             handles.push(scope.spawn(move || {
-                assert!(
-                    verify_bytes(&context, &message, &signature, &mldsa_public_key)
-                        .expect("verify")
-                );
+                assert!(verify_bytes(&context, &message, &signature, &public_key).expect("verify"));
                 assert_eq!(
-                    open(&context, &sealed, &mldsa_public_key).expect("open").expect("opened"),
+                    open(&context, &sealed, &public_key).expect("open").expect("opened"),
                     message
                 );
                 assert_eq!(
@@ -211,10 +210,15 @@ fn go_fuzz_seed_corpora_do_not_panic_in_rust() {
             vec![0_u8; ML_DSA_87_PUBLIC_KEY_SIZE],
         ),
     ];
+    // Every corpus entry carries an all-zero pk. That key is weak and is
+    // rejected at construction, so the raw bytes are pushed through
+    // `PublicKey::from_bytes` (which must not panic) and the verify / open
+    // sweeps run under an honest key.
+    let fuzz_public_key = MlDsa87::from_seed([0x5a_u8; 32]).expect("signer").public_key();
     for (context, message, sig_bytes, pk_bytes) in mldsa_verify_corpus {
         let signature = pad_array::<ML_DSA_87_SIGNATURE_SIZE>(&sig_bytes);
-        let public_key = pad_array::<ML_DSA_87_PUBLIC_KEY_SIZE>(&pk_bytes);
-        let _ = verify_bytes(&context, &message, &signature, &public_key);
+        let _ = PublicKey::from_bytes(&pad_array::<ML_DSA_87_PUBLIC_KEY_SIZE>(&pk_bytes));
+        let _ = verify_bytes(&context, &message, &signature, &fuzz_public_key);
     }
     for (context, signature_message, pk_bytes) in [
         (Vec::new(), Vec::new(), vec![0_u8; ML_DSA_87_PUBLIC_KEY_SIZE]),
@@ -229,8 +233,8 @@ fn go_fuzz_seed_corpora_do_not_panic_in_rust() {
             vec![0_u8; ML_DSA_87_PUBLIC_KEY_SIZE],
         ),
     ] {
-        let public_key = pad_array::<ML_DSA_87_PUBLIC_KEY_SIZE>(&pk_bytes);
-        let _ = open(&context, &signature_message, &public_key);
+        let _ = PublicKey::from_bytes(&pad_array::<ML_DSA_87_PUBLIC_KEY_SIZE>(&pk_bytes));
+        let _ = open(&context, &signature_message, &fuzz_public_key);
     }
     for len in
         [0, ML_DSA_87_SIGNATURE_SIZE - 1, ML_DSA_87_SIGNATURE_SIZE, ML_DSA_87_SIGNATURE_SIZE + 100]
