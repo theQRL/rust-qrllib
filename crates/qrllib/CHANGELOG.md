@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.6](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.5...qrllib-v0.1.6) - 2026-09-18
+
+### Added
+
+- secret key encoding checks
+- *(mldsa)* [**breaking**] validated PublicKey type and weak-key rule
+
+### Other
+
+- Merge pull request #46 from jplomas/main
+- further coverage tweaks
+
 ## [0.1.5](https://github.com/theQRL/rust-qrllib/compare/qrllib-v0.1.4...qrllib-v0.1.5) - 2026-08-31
 
 ### Fixed
