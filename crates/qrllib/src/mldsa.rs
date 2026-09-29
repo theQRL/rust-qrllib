@@ -1571,11 +1571,12 @@ fn crypto_sign_signature(
             let w0_current = w0;
             poly_vec_k_sub(&mut w0, &w0_current, &hints);
             poly_vec_k_reduce(&mut w0);
-            // Coverage: the following `continue` arms (w0 norm, hint norm, hint
-            // count, and the outer `RejectionBudgetExceeded` fallthrough) are
-            // probabilistic rejection-sampling branches. Our deterministic test
-            // seeds happen to succeed on the first iteration; the code paths
-            // are exercised by ACVP parity fixtures and the Go reference.
+            // Coverage: the w0-norm `continue` below is a probabilistic
+            // rejection branch exercised by the ACVP fixtures. The hint-count
+            // `continue` is driven by the full-magnitude `t0` key in
+            // `secret_keys`, which is rejected on most attempts. The hint-norm
+            // `continue` and the `RejectionBudgetExceeded` fallthrough are
+            // unreachable in practice (see their comments).
             if poly_vec_k_chk_norm(&w0, GAMMA2 - BETA) != 0 {
                 continue;
             }
@@ -1584,7 +1585,10 @@ fn crypto_sign_signature(
             poly_vec_k_inv_ntt_to_mont(&mut hints);
             poly_vec_k_reduce(&mut hints);
             if poly_vec_k_chk_norm(&hints, GAMMA2) != 0 {
-                //coverage:ignore reason=statistically-unreachable
+                // Unreachable for any decodable t0: each coefficient of c·t0
+                // is a sum of TAU terms of magnitude at most 2^(D-1), so its
+                // norm is at most TAU·2^(D-1) = 245760 < GAMMA2 = 261888.
+                //coverage:ignore reason=defensively-unreachable
                 continue;
             }
 
@@ -1598,6 +1602,9 @@ fn crypto_sign_signature(
             pack_sig(signature, &challenge, &z, &hints);
             return Ok(());
         }
+        // A valid key is accepted with probability about 0.26 per attempt
+        // whatever the key, so exceeding the budget is a sub-2^-440 event; it
+        // exists so a crafted t0 cannot make signing spin.
         //coverage:ignore reason=statistically-unreachable
         Err(QrllibError::RejectionBudgetExceeded(REJECTION_BUDGET))
     })();
@@ -1874,6 +1881,29 @@ mod tests {
             signer.sign_attached(b"ctx", b"after zeroize"),
             Err(QrllibError::MlDsaSecretKeyZeroized)
         ));
+    }
+
+    /// Mirrors go-qrllib `TestMLDSA87_SignAfterZeroize`: every signing path
+    /// refuses a zeroized keypair, `zeroize` is idempotent, and the public
+    /// key stays available and still verifies earlier signatures.
+    #[test]
+    fn mldsa87_every_sign_path_rejects_zeroized_secret_key() {
+        let (context, message) = (b"ZOND".as_slice(), b"after zeroize".as_slice());
+        let mut signer = MlDsa87::from_seed([14_u8; ML_DSA_87_CRYPTO_SEED_SIZE]).expect("signer");
+        let public_key = signer.public_key_bytes();
+        let genuine = signer.sign(context, message).expect("sign");
+
+        let zeroized = |r: crate::Result<()>| matches!(r, Err(QrllibError::MlDsaSecretKeyZeroized));
+        for _ in 0..2 {
+            signer.zeroize();
+            assert!(zeroized(signer.sign(context, message).map(drop)));
+            assert!(zeroized(signer.sign_deterministic(context, message).map(drop)));
+            assert!(zeroized(signer.sign_attached(context, message).map(drop)));
+            assert!(zeroized(signer.sign_attached_deterministic(context, message).map(drop)));
+        }
+
+        assert_eq!(signer.public_key_bytes(), public_key);
+        assert!(verify_bytes(context, message, &genuine, &signer.public_key()).expect("verify"));
     }
 
     #[test]
