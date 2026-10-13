@@ -124,7 +124,7 @@ jobs:
           require-reason: 'true'
 
       - name: Upload coverage to Codecov
-        if: github.repository == 'theqrl/rust-qrllib' || github.repository == 'theQRL/rust-qrllib'
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'theQRL/rust-qrllib'
         uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
