@@ -47,7 +47,7 @@ jobs:
           persist-credentials: false
 
       - name: Run cargo-deny
-        uses: EmbarkStudios/cargo-deny-action@9c67a826e39827395bfa619cd85cb2aaeb43cfaa # v2
+        uses: EmbarkStudios/cargo-deny-action@17aeb3c839e42274e2b8adf721c8c65edfdc74dd # v2
         with:
           rust-version: 1.95.0
           manifest-path: ./Cargo.toml
